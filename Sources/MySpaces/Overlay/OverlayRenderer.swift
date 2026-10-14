@@ -5,10 +5,14 @@ import MySpacesCore
 @MainActor
 final class OverlayRenderer {
     private var windows: [NSWindow] = []
+    private var origins: [NSPoint] = []
+    private var offset = CGVector.zero
 
     func hideAll() {
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
+        origins.removeAll()
+        offset = .zero
     }
 
     /// `fadeIn` > 0 fades the names in, in step with Mission Control's own caption animation.
@@ -27,6 +31,7 @@ final class OverlayRenderer {
                                          name: placement.name, spaceKey: placement.spaceKey, maxWidth: placement.maxWidth)
             windows.append(makeWindow(aligned, style, fontSize: fontSize, screenHeight: screen.frame.height))
         }
+        origins = windows.map(\.frame.origin)
         if fadeIn > 0 {
             windows.forEach { $0.alphaValue = 0 }
             NSAnimationContext.runAnimationGroup { ctx in
@@ -34,6 +39,17 @@ final class OverlayRenderer {
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 windows.forEach { $0.animator().alphaValue = 1 }
             }
+        }
+    }
+
+    /// Moves every name by (dx, dy) points from where it was drawn (screen top-left coordinates),
+    /// so names follow captions through the last few points of Mission Control's animation.
+    func move(dx: Int, dy: Int) {
+        let target = CGVector(dx: CGFloat(dx), dy: CGFloat(dy))
+        guard target != offset else { return }
+        offset = target
+        for (window, origin) in zip(windows, origins) {
+            window.setFrameOrigin(NSPoint(x: origin.x + target.dx, y: origin.y - target.dy))
         }
     }
 

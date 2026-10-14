@@ -32,4 +32,12 @@ final class LayoutStabilizerTests: XCTestCase {
         XCTAssertFalse(s.observe([]))
         XCTAssertTrue(s.observe([]))
     }
+
+    func testStricterStabilizerNeedsThreeAgreeingReadingsWithinOnePoint() {
+        let s = LayoutStabilizer(requiredAgreeing: 3, tolerance: 1)
+        XCTAssertFalse(s.observe([placement(y: 69)]))
+        XCTAssertFalse(s.observe([placement(y: 69.4)]), "two readings are not enough")
+        XCTAssertTrue(s.observe([placement(y: 69.2)]))
+        XCTAssertFalse(s.observe([placement(y: 70.6)]), "moved more than 1 pt: start over")
+    }
 }

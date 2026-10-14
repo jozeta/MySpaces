@@ -49,4 +49,40 @@ final class CaptionFingerprintTests: XCTestCase {
         let b = try XCTUnwrap(CaptionFingerprint(image: img, rects: [collapsedRects[0]], pointsPerPixel: 1))
         XCTAssertFalse(a.matches(b))
     }
+
+    func testNeighbouringCaptionsAreDistinguished() throws {
+        // "Desktop 3" and "Desktop 4" boxes (same size, no highlight): a layout shifted by one slot
+        // must not pass as a match.
+        let img = try fixture("mc-collapsed")
+        let d3 = try XCTUnwrap(CaptionFingerprint(image: img, rects: [CGRect(x: 1111, y: 60, width: 64, height: 20)], pointsPerPixel: 1))
+        let d4 = try XCTUnwrap(CaptionFingerprint(image: img, rects: [CGRect(x: 1201, y: 60, width: 64, height: 20)], pointsPerPixel: 1))
+        XCTAssertFalse(d3.matches(d4))
+    }
+
+    func testOneChangedCaptionAmongSeveralIsDetected() throws {
+        let img = try fixture("mc-collapsed")
+        let rects = [CGRect(x: 934, y: 60, width: 70, height: 19), CGRect(x: 1111, y: 60, width: 64, height: 20)]
+        let a = try XCTUnwrap(CaptionFingerprint(image: img, rects: rects, pointsPerPixel: 1))
+        let b = try XCTUnwrap(CaptionFingerprint(image: img, rects: [rects[0], CGRect(x: 1201, y: 60, width: 64, height: 20)], pointsPerPixel: 1))
+        XCTAssertFalse(a.matches(b), "a mean over all captions would dilute one wrong caption")
+    }
+
+    func testLocateFindsCaptionsThatDriftedAFewPoints() throws {
+        let img = try fixture("mc-collapsed")
+        let reference = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects, pointsPerPixel: 1))
+        // The captions now sit 3 pt left and 1 pt up of where they were remembered.
+        let remembered = collapsedRects.map { $0.offsetBy(dx: 3, dy: 1) }
+        let found = try XCTUnwrap(CaptionFingerprint.locate(reference, expectedAt: remembered, in: img, pointsPerPixel: 1,
+                                                            maxShift: CGSize(width: 6, height: 3)))
+        XCTAssertEqual(found.dx, -3)
+        XCTAssertEqual(found.dy, -1)
+    }
+
+    func testLocateRejectsCaptionsOutsideTheSearchRange() throws {
+        let img = try fixture("mc-collapsed")
+        let reference = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects, pointsPerPixel: 1))
+        let farAway = collapsedRects.map { $0.offsetBy(dx: 40, dy: 0) }
+        XCTAssertNil(CaptionFingerprint.locate(reference, expectedAt: farAway, in: img, pointsPerPixel: 1,
+                                               maxShift: CGSize(width: 6, height: 3)))
+    }
 }

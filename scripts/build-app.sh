@@ -1,8 +1,9 @@
 #!/bin/bash
-# Builds build/MySpaces.app. Usage: scripts/build-app.sh [debug|release]
+# Builds build/MySpaces.app. Usage: scripts/build-app.sh [release|debug] (default release:
+# the overlay does per-frame image work that is 100x slower unoptimised)
 # Signs with MYSPACES_SIGN_IDENTITY (default "Apple Development") so TCC grants survive rebuilds.
 set -euo pipefail
-CONFIG="${1:-debug}"
+CONFIG="${1:-release}"
 IDENTITY="${MYSPACES_SIGN_IDENTITY:-Apple Development}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
