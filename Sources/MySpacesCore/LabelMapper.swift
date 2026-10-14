@@ -18,11 +18,18 @@ public struct LabelPlacement: Equatable, Sendable {
     public let spaceKey: String
     /// Widest the overlay may be without reaching a neighbouring caption.
     public let maxWidth: CGFloat
+
+    public init(rect: CGRect, name: String, spaceKey: String, maxWidth: CGFloat) {
+        self.rect = rect
+        self.name = name
+        self.spaceKey = spaceKey
+        self.maxWidth = maxWidth
+    }
 }
 
 public enum LabelMapper {
     static let soloMaxWidth: CGFloat = 240
-    static let neighbourMargin: CGFloat = 8
+    static let neighbourMargin: CGFloat = 4
     static let sameRowTolerance: CGFloat = 12
 
     public static func desktopNumber(in text: String) -> Int? {

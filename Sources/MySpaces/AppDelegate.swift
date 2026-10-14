@@ -5,6 +5,7 @@ import MySpacesCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: AppModel!
     private var menuBar: MenuBarController!
+    private var overlay: OverlayCoordinator!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let controller = SpacesController(
@@ -22,5 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.refresh() }
         }
+        overlay = OverlayCoordinator(model: model)
+        overlay.start()
     }
 }

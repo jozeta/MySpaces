@@ -52,7 +52,7 @@ final class LabelMapperTests: XCTestCase {
         let collapsed = [label("Desktop 1", x: 969, y: 70), label("Desktop 2", x: 1055, y: 70), label("Desktop 3", x: 1143, y: 70)]
         let three = [desktop(1, ""), desktop(2, "B"), desktop(3, "C")]
         let result = try XCTUnwrap(LabelMapper.placements(labels: collapsed, displaySpaces: three, names: ["B": String(repeating: "W", count: 40)]))
-        XCTAssertEqual(result[0].maxWidth, 78, accuracy: 0.1) // min(86, 88) - 8
+        XCTAssertEqual(result[0].maxWidth, 82, accuracy: 0.1) // min(86, 88) - 4
     }
 
     func testLoneLabelGetsGenerousMaxWidth() throws {

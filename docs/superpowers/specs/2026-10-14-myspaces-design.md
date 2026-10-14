@@ -19,7 +19,7 @@ compact rows, subtle separators, system light/dark. Palette accents: Deep Fjord
 |---|---|
 | Rename labels through Accessibility? | No. Dock's AX `mc` group has zero children while Mission Control is open (also with `AXEnhancedUserInterface`). |
 | Rename labels natively? | Only via code injection into Dock (spaces-renamer/MacForge); requires SIP partially disabled and is documented as broken from macOS 14.4. **Rejected.** |
-| Can an app window render above Mission Control? | Yes. Windows with `.canJoinAllSpaces + .stationary` render unscaled above MC, even at `.floating` level. |
+| Can an app window render above Mission Control? | Yes. Windows with `.canJoinAllSpaces + .stationary` render unscaled above MC. Over the Spaces bar itself only levels ≥ Dock (20) show; `.floating` is hidden there (found in implementation). |
 | Detect MC open/close? | Dock owns a full-screen layer-20 window only while MC is open. Detected in ~0.15 s open / ~0.5 s close via `CGWindowListCopyWindowInfo`. |
 | Locate labels? | Vision text recognition over a **tight (~32 pt) crop** of the caption row reads all labels exactly, including at 1× scale. Tall crops miss or misread small captions. First Vision call ~24 s (cold model) → prewarm at launch; warm ~0.03 s. |
 | Full-screen Spaces | Labeled with the app name, not "Desktop N". "Desktop N" numbering skips them (plist `type 4`). |
@@ -76,7 +76,7 @@ Swift, SwiftUI + AppKit, single app target plus a unit-test target.
 - **`LabelMapper`** — maps "Desktop N" → Nth `.desktop` Space on that display →
   identity key → name. Ignores any other text.
 - **`OverlayRenderer`** — one borderless, click-through window per label
-  (`.floating`, `.canJoinAllSpaces + .stationary + .ignoresCycle +
+  (`.popUpMenu` level, `.canJoinAllSpaces + .stationary + .ignoresCycle +
   .fullScreenAuxiliary`). Samples bar pixels left and right of the caption,
   paints a matching patch over "Desktop N", and draws the name in the native
   caption font/colour. If the sampled background luminance standard deviation exceeds 0.08 (0–1 scale; tuned against fixtures),

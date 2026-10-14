@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
     @Published var notice: String?
     @Published var editingKey: String?
     @Published private(set) var multiDisplayNote: String?
+    @Published var overlayStatus: String?
 
     let controller: SpacesController
 

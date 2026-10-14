@@ -4,6 +4,7 @@ import SwiftUI
 struct SpaceListView: View {
     @ObservedObject var model: AppModel
     var openSettings: () -> Void
+    @AppStorage("dismissedScreenRecordingHint") private var dismissedScreenRecordingHint = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,6 +28,17 @@ struct SpaceListView: View {
             if !Permissions.accessibilityGranted {
                 PermissionRow(text: "Switching desktops needs Accessibility access.",
                               action: Permissions.openAccessibilitySettings)
+            }
+            if !Permissions.screenRecordingGranted && !dismissedScreenRecordingHint {
+                PermissionRow(text: "Names in Mission Control need Screen Recording.",
+                              action: {
+                                  Permissions.requestScreenRecording()
+                                  Permissions.openScreenRecordingSettings()
+                              },
+                              onDismiss: { dismissedScreenRecordingHint = true })
+            } else if let status = model.overlayStatus {
+                Text(status).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
             }
 
             VStack(spacing: 2) {
@@ -106,6 +118,7 @@ private struct SpaceRowView: View {
 struct PermissionRow: View {
     let text: String
     let action: () -> Void
+    var onDismiss: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -113,6 +126,10 @@ struct PermissionRow: View {
             Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
             Button("Allow…", action: action).controlSize(.small)
+            if let onDismiss {
+                Button(action: onDismiss) { Image(systemName: "xmark").font(.system(size: 9)) }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary).help("Not now")
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
     }
