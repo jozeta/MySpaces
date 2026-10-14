@@ -29,8 +29,21 @@ final class HotkeysTests: XCTestCase {
         XCTAssertEqual(hk.moveRight, KeyChord(keyCode: 124, modifierFlags: 8650752))
     }
 
-    func testMalformedEntryIsIgnored() {
-        let hk = SpaceHotkeys.parse(symbolicHotKeys: ["118": ["enabled": true, "value": ["parameters": [1]]]])
-        XCTAssertTrue(hk.desktops.isEmpty)
+    func testEnabledWithoutParametersUsesDefaultMoveChord() {
+        // macOS stores only {enabled = 1} when the default key is kept (seen on macOS 27).
+        let hk = SpaceHotkeys.parse(symbolicHotKeys: ["79": ["enabled": true], "81": ["enabled": true]])
+        XCTAssertEqual(hk.moveLeft, KeyChord(keyCode: 123, modifierFlags: 0x840000))
+        XCTAssertEqual(hk.moveRight, KeyChord(keyCode: 124, modifierFlags: 0x840000))
+    }
+
+    func testEnabledDesktopWithoutParametersUsesControlDigit() {
+        let hk = SpaceHotkeys.parse(symbolicHotKeys: [
+            "118": ["enabled": true],
+            "122": ["enabled": true, "value": ["parameters": [1]]],
+            "127": ["enabled": true],
+        ])
+        XCTAssertEqual(hk.desktops[1], KeyChord(keyCode: 18, modifierFlags: 0x40000))
+        XCTAssertEqual(hk.desktops[5], KeyChord(keyCode: 23, modifierFlags: 0x40000))
+        XCTAssertNil(hk.desktops[10], "no default key exists for Desktop 10+")
     }
 }

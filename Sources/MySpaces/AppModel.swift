@@ -38,8 +38,30 @@ final class AppModel: ObservableObject {
         editingKey = nil
     }
 
-    /// Replaced in Task 9 with permission checks and switch verification.
     func switchTo(_ row: SpaceRow) {
-        controller.switchTo(key: row.id)
+        guard Permissions.accessibilityGranted else {
+            notice = "Allow MySpaces to switch desktops in Accessibility settings."
+            Permissions.requestAccessibility()
+            return
+        }
+        let plan = controller.switchTo(key: row.id)
+        switch plan {
+        case .alreadyThere:
+            return
+        case .unavailable:
+            notice = "Turn on “Move left/right a space” or “Switch to Desktop” shortcuts to switch."
+            return
+        case .direct, .step:
+            break
+        }
+        let target = row.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            self.refresh()
+            if self.rows.first(where: { $0.space.isCurrent })?.id != target {
+                self.notice = "Didn't reach that desktop. Enable direct switching in Settings."
+                log.notice("switch verification failed for \(target, privacy: .public)")
+            }
+        }
     }
 }

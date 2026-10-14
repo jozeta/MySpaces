@@ -24,6 +24,11 @@ struct SpaceListView: View {
                 .padding(.horizontal, 14).padding(.vertical, 8)
             }
 
+            if !Permissions.accessibilityGranted {
+                PermissionRow(text: "Switching desktops needs Accessibility access.",
+                              action: Permissions.openAccessibilitySettings)
+            }
+
             VStack(spacing: 2) {
                 ForEach(model.rows) { row in
                     SpaceRowView(row: row, model: model)
@@ -95,6 +100,21 @@ private struct SpaceRowView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { if model.editingKey != row.id { model.switchTo(row) } }
+    }
+}
+
+struct PermissionRow: View {
+    let text: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            Button("Allow…", action: action).controlSize(.small)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
     }
 }
 

@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             source: LiveSpacesSource(),
             store: NameStore(fileURL: NameStore.defaultURL),
             hotkeys: LiveHotkeySource(),
-            keys: NoopKeyPoster())
+            keys: KeyPoster())
         model = AppModel(controller: controller)
         menuBar = MenuBarController(model: model, openSettings: {})
 

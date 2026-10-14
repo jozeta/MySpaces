@@ -8,7 +8,3 @@ struct LiveHotkeySource: HotkeySource {
         return SpaceHotkeys.parse(symbolicHotKeys: raw)
     }
 }
-
-struct NoopKeyPoster: KeyPosting {
-    func post(_ chord: KeyChord, times: Int) {}
-}
