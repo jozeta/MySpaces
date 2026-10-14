@@ -13,10 +13,11 @@ final class OverlayCoordinator {
     static let settleCap: TimeInterval = 2.0
     /// Measured: the Spaces bar finishes sliding in ~0.31 s after Mission Control opens.
     static let slideInDuration: TimeInterval = 0.35
-    /// Periodic rescan while open, so a changed layout (Space added/removed) is caught.
+    /// Periodic OCR re-check while open, so a changed layout (Space added/removed) is caught.
     static let rescanInterval: TimeInterval = 1.5
-    /// The bar counts as "under the pointer" down to this far below its caption row.
-    static let barMargin: CGFloat = 24
+    /// Caption fingerprint watch rate while Mission Control is open (~25 ms per capture).
+    static let fingerprintInterval: TimeInterval = 1.0 / 30
+    static let maxReferences = 12
     static let missLimit = 5
     private static let rowsKey = "captionRowMidYs.v2"
 
@@ -33,9 +34,21 @@ final class OverlayCoordinator {
     private var watchTimer: Timer?
     /// Caption rows seen before (collapsed and expanded bar), in points from the top.
     private var knownRows: [CGFloat]
-    /// Bottom of the bar currently shown, from the last successful scan.
-    private var barBottom: CGFloat?
-    private var pointerInBar = false
+    /// A layout that was drawn before: its caption snapshot, and the names to draw over it.
+    private struct Reference {
+        let signature: String
+        let fingerprint: CaptionFingerprint
+        let rects: [CGRect]
+        let styled: [(LabelPlacement, PatchStyle)]
+        var bandHeight: CGFloat { (rects.map(\.maxY).max() ?? 0) + 4 }
+    }
+    private var references: [Reference] = []
+    private var shownReference: Reference?
+    private var shownAt = Date.distantPast
+    private var fingerprintTimer: Timer?
+    private var fingerprintInFlight = false
+    /// Bumped on every open/close, so results from a previous session are dropped.
+    private var gateSession = 0
     private var settlingSince: Date?
     private var lastScanStart = Date.distantPast
     private var scanInFlight = false
@@ -62,10 +75,9 @@ final class OverlayCoordinator {
     }
 
     private func missionControlChanged(_ open: Bool) {
+        gateSession += 1
         if open {
             gate.open()
-            barBottom = nil
-            pointerInBar = false
             forceFullScan = false
             candidateRow = nil
             if knownRows.isEmpty {
@@ -81,9 +93,14 @@ final class OverlayCoordinator {
             watchTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.watch() }
             }
+            fingerprintTimer?.invalidate()
+            fingerprintTimer = Timer.scheduledTimer(withTimeInterval: Self.fingerprintInterval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.fingerprintTick() }
+            }
         } else {
             gate.close()
             watchTimer?.invalidate()
+            fingerprintTimer?.invalidate()
             settlingSince = nil
             hide()
             model.refresh()
@@ -99,30 +116,75 @@ final class OverlayCoordinator {
     }
 
     private func watch() {
-        // Only the bar itself expands/collapses on hover; the thumbnails area below it does not.
-        if let barBottom {
-            let inBar = pointerY() < barBottom
-            if inBar != pointerInBar {
-                pointerInBar = inBar
-                hide()
-                beginSettling()
-                return
-            }
-        }
         if settlingSince == nil, !scanInFlight, Date().timeIntervalSince(lastScanStart) > Self.rescanInterval {
             scan()
         }
     }
 
-    /// Pointer distance from the top of the main screen, in points.
-    private func pointerY() -> CGFloat {
-        guard let screen = NSScreen.screens.first else { return .greatestFiniteMagnitude }
-        return screen.frame.maxY - NSEvent.mouseLocation.y
+    /// Identifies a layout: which desktop is current (its caption sits on a highlight and the bar
+    /// shows its wallpaper) and which named desktops there are.
+    private func signature() -> String {
+        let spaces = model.controller.primaryDisplaySpaces
+        let names = model.controller.names
+        let current = spaces.first(where: \.isCurrent)?.key ?? "-"
+        return current + "|" + spaces.filter(\.isDesktop).map { "\($0.key)=\(names[$0.key] ?? "")" }.joined(separator: ",")
+    }
+
+    /// ~30 Hz while Mission Control is open: compare the pixels under remembered captions.
+    /// Shows names the moment a remembered layout appears and hides them the moment it changes
+    /// (closing, sliding, expanding) — no OCR, so within a frame or two.
+    private func fingerprintTick() {
+        guard !fingerprintInFlight, detector.isOpen, Permissions.screenRecordingGranted else { return }
+        let sig = signature()
+        let candidates = shownReference.map { [$0] } ?? references.filter { $0.signature == sig }
+        guard let height = candidates.map(\.bandHeight).max() else { return }
+        fingerprintInFlight = true
+        let session = gateSession
+        Task.detached(priority: .userInitiated) {
+            let capture = try? await ScreenBandCapture.capture(heightPoints: height, filter: true)
+            let matches = candidates.map { ref -> Bool in
+                guard let (image, ppp) = capture,
+                      let now = CaptionFingerprint(image: image, rects: ref.rects, pointsPerPixel: ppp) else { return false }
+                return ref.fingerprint.matches(now)
+            }
+            await MainActor.run {
+                self.fingerprintInFlight = false
+                guard capture != nil, session == self.gateSession, self.detector.isOpen else { return }
+                if self.shownReference != nil {
+                    if matches.first != true {
+                        self.hide()
+                        self.beginSettling()
+                    }
+                } else if let i = matches.firstIndex(of: true) {
+                    let ref = candidates[i]
+                    self.settlingSince = nil
+                    self.render(ref)
+                }
+            }
+        }
+    }
+
+    private func render(_ ref: Reference) {
+        if !LayoutStabilizer.same(ref.styled.map(\.0), shown) {
+            renderer.show(ref.styled)
+            ScreenBandCapture.invalidateFilter()
+            shown = ref.styled.map(\.0)
+        }
+        shownReference = ref
+        shownAt = Date()
+    }
+
+    private func remember(_ ref: Reference) {
+        references.removeAll { $0.signature == ref.signature && abs(($0.rects.first?.midY ?? 0) - (ref.rects.first?.midY ?? 0)) < 8 }
+        references.insert(ref, at: 0)
+        references = Array(references.prefix(Self.maxReferences))
     }
 
     private func hide() {
         renderer.hideAll()
+        ScreenBandCapture.invalidateFilter()
         shown = []
+        shownReference = nil
     }
 
     private func scan() {
@@ -157,6 +219,7 @@ final class OverlayCoordinator {
         let names = model.controller.names
         let recognizer = self.recognizer
         let band = Self.bandHeight
+        let sig = signature()
         let started = Date()
         Task.detached(priority: .userInitiated) {
             do {
@@ -170,9 +233,14 @@ final class OverlayCoordinator {
                     let placement = LabelPlacement(rect: tight, name: p.name, spaceKey: p.spaceKey, maxWidth: p.maxWidth)
                     return (placement, BackgroundSampler.style(for: tight, in: image, pointsPerPixel: ppp))
                 }
+                // Snapshot of the original captions (our windows are excluded from the capture).
+                let fingerprint = styled.flatMap { s in
+                    s.isEmpty ? nil : CaptionFingerprint(image: image, rects: s.map(\.0.rect), pointsPerPixel: ppp)
+                }
                 await MainActor.run {
                     self.finish(ticket, labels: labels, styled: styled, settling: settling && !timedOut && !capped,
-                                 fullScan: rows == nil, elapsed: Date().timeIntervalSince(started))
+                                 fullScan: rows == nil, elapsed: Date().timeIntervalSince(started),
+                                 fingerprint: fingerprint, signature: sig, started: started)
                 }
             } catch {
                 await MainActor.run {
@@ -185,8 +253,11 @@ final class OverlayCoordinator {
     }
 
     private func finish(_ ticket: ScanTicket, labels: [RecognizedLabel], styled: [(LabelPlacement, PatchStyle)]?,
-                        settling: Bool, fullScan: Bool, elapsed: TimeInterval) {
+                        settling: Bool, fullScan: Bool, elapsed: TimeInterval,
+                        fingerprint: CaptionFingerprint?, signature sig: String, started: Date) {
         scanInFlight = false
+        // The fingerprint watch drew a newer layout while this scan was running: it is stale.
+        if shownReference != nil, started < shownAt { return }
         let row = LabelMapper.captionRow(in: labels)
         // A known row with no captions means the bar moved or changed shape, not a mismatch.
         // While settling the captions may simply not be drawn yet, so keep probing the fast path.
@@ -230,14 +301,17 @@ final class OverlayCoordinator {
                 return
             }
             lastScanSummary = String(format: "%.2fs · %d named%@", elapsed, placements.count, fullScan ? " · full scan" : "")
-            if let row {
-                barBottom = row.maxY + Self.barMargin
-                pointerInBar = pointerY() < row.maxY + Self.barMargin
-                remember(row: row.midY)
+            if let row { remember(row: row.midY) }
+            guard let styled else { return }
+            if let fingerprint {
+                let ref = Reference(signature: sig, fingerprint: fingerprint, rects: styled.map(\.0.rect), styled: styled)
+                remember(ref)
+                render(ref)
+            } else if !LayoutStabilizer.same(placements, shown) { // avoid flicker
+                renderer.show(styled)
+                ScreenBandCapture.invalidateFilter()
+                shown = placements
             }
-            guard !LayoutStabilizer.same(placements, shown), let styled else { return } // avoid flicker
-            renderer.show(styled)
-            shown = placements
         }
     }
 
@@ -247,5 +321,4 @@ final class OverlayCoordinator {
         knownRows = Array((knownRows + [midY]).suffix(2))
         UserDefaults.standard.set(knownRows.map(Double.init), forKey: Self.rowsKey)
     }
-
 }

@@ -26,6 +26,18 @@ enum Permissions {
         open("x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts")
     }
 
+    /// Clears MySpaces' own entry for `service` ("Accessibility", "ScreenCapture"). Needed when
+    /// System Settings shows MySpaces as allowed but the entry belongs to another signature
+    /// (an older build with the same bundle ID), so macOS keeps refusing this one.
+    static func reset(_ service: String) {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        let task = Process()
+        task.launchPath = "/usr/bin/tccutil"
+        task.arguments = ["reset", service, id]
+        try? task.run()
+        task.waitUntilExit()
+    }
+
     private static func open(_ url: String) {
         if let url = URL(string: url) { NSWorkspace.shared.open(url) }
     }

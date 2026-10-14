@@ -62,22 +62,36 @@ struct SpaceListView: View {
         if showAX || showSR {
             VStack(spacing: 6) {
                 if showAX {
-                    PermissionCard(
-                        symbol: "arrow.left.arrow.right",
-                        title: "Switch desktops from this menu",
-                        detail: "MySpaces presses your Mission Control shortcuts for you. macOS asks for Accessibility access to allow that.",
-                        actionTitle: "Allow…",
-                        action: model.requestAccessibility,
-                        onDismiss: { dismissedAccessibilityHint = true })
+                    if model.accessibilityRequested {
+                        PermissionCard(
+                            symbol: "hourglass",
+                            title: "Waiting for Accessibility",
+                            detail: "Turn on MySpaces under Accessibility. Already on but still asked? macOS is holding an old entry for MySpaces — reset it and allow again.",
+                            actionTitle: "Settings…",
+                            action: Permissions.openAccessibilitySettings,
+                            secondaryTitle: "Reset and ask again",
+                            secondaryAction: model.resetAccessibility,
+                            onDismiss: { dismissedAccessibilityHint = true })
+                    } else {
+                        PermissionCard(
+                            symbol: "arrow.left.arrow.right",
+                            title: "Switch desktops from this menu",
+                            detail: "MySpaces presses your Mission Control shortcuts for you. macOS asks for Accessibility access to allow that.",
+                            actionTitle: "Allow…",
+                            action: model.requestAccessibility,
+                            onDismiss: { dismissedAccessibilityHint = true })
+                    }
                 }
                 if showSR {
                     if model.screenRecordingRequested {
                         PermissionCard(
                             symbol: "arrow.clockwise",
                             title: "Relaunch to finish",
-                            detail: "After turning on MySpaces under Screen & System Audio Recording, relaunch so macOS applies it.",
+                            detail: "After turning on MySpaces under Screen & System Audio Recording, relaunch so macOS applies it. Already on but still asked? Reset and allow again.",
                             actionTitle: "Relaunch",
                             action: model.relaunch,
+                            secondaryTitle: "Reset and ask again",
+                            secondaryAction: model.resetScreenRecording,
                             onDismiss: { dismissedScreenRecordingHint = true })
                     } else {
                         PermissionCard(
@@ -152,6 +166,8 @@ private struct PermissionCard: View {
     let detail: String
     let actionTitle: String
     let action: () -> Void
+    var secondaryTitle: String? = nil
+    var secondaryAction: (() -> Void)? = nil
     let onDismiss: () -> Void
 
     var body: some View {
@@ -167,6 +183,9 @@ private struct PermissionCard: View {
             HStack(spacing: 8) {
                 Spacer()
                 Button("Not now", action: onDismiss).buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+                if let secondaryTitle, let secondaryAction {
+                    Button(secondaryTitle, action: secondaryAction).controlSize(.small)
+                }
                 Button(actionTitle, action: action).controlSize(.small).buttonStyle(.borderedProminent)
             }
         }

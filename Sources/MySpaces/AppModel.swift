@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var accessibilityGranted = Permissions.accessibilityGranted
     @Published private(set) var screenRecordingGranted = Permissions.screenRecordingGranted
     @Published private(set) var screenRecordingRequested = false
+    @Published private(set) var accessibilityRequested = false
 
     let controller: SpacesController
     private var switchInFlight = false
@@ -50,6 +51,19 @@ final class AppModel: ObservableObject {
     /// Shows the macOS prompt, which also adds MySpaces to the Accessibility list.
     func requestAccessibility() {
         Permissions.requestAccessibility()
+        accessibilityRequested = true
+    }
+
+    func resetAccessibility() {
+        Permissions.reset("Accessibility")
+        Permissions.requestAccessibility()
+        accessibilityRequested = true
+    }
+
+    func resetScreenRecording() {
+        Permissions.reset("ScreenCapture")
+        _ = Permissions.requestScreenRecording()
+        screenRecordingRequested = true
     }
 
     /// The first request shows the macOS prompt and registers MySpaces; later requests can't
