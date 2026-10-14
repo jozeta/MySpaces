@@ -1,6 +1,18 @@
 import Foundation
 
-public protocol SpacesSource { func currentSpaces() throws -> [Space] }
+/// A Space list plus where it came from. Fallback data (Dock's preferences) may lag behind
+/// and spells display identifiers differently, so it is shown but never used for pruning.
+public struct SpacesRead {
+    public let spaces: [Space]
+    public let isFallback: Bool
+
+    public init(spaces: [Space], isFallback: Bool) {
+        self.spaces = spaces
+        self.isFallback = isFallback
+    }
+}
+
+public protocol SpacesSource { func currentSpaces() throws -> SpacesRead }
 public protocol HotkeySource { func hotkeys() -> SpaceHotkeys }
 public protocol KeyPosting { func post(_ chord: KeyChord, times: Int) }
 
@@ -33,12 +45,14 @@ public final class SpacesController {
 
     public func refresh() {
         do {
-            let fresh = try source.currentSpaces()
-            guard !fresh.isEmpty else { throw CocoaError(.fileReadUnknown) }
-            spaces = fresh
+            let read = try source.currentSpaces()
+            guard !read.spaces.isEmpty else { throw CocoaError(.fileReadUnknown) }
+            spaces = read.spaces
             lastError = nil
-            let prune = reconciler.keysToPrune(storedKeys: Set(store.names.keys), spaces: fresh)
-            try? store.removeNames(for: prune)
+            if !read.isFallback {
+                let prune = reconciler.keysToPrune(storedKeys: Set(store.names.keys), spaces: read.spaces)
+                try? store.removeNames(for: prune)
+            }
         } catch {
             lastError = "Couldn't read Spaces"
         }

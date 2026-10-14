@@ -14,6 +14,7 @@ final class AppModel: ObservableObject {
     @Published var overlayStatus: String?
 
     let controller: SpacesController
+    private var switchInFlight = false
 
     init(controller: SpacesController) {
         self.controller = controller
@@ -40,6 +41,8 @@ final class AppModel: ObservableObject {
     }
 
     func switchTo(_ row: SpaceRow) {
+        // A second click before the first switch lands would plan from a stale current desktop.
+        guard !switchInFlight else { return }
         guard Permissions.accessibilityGranted else {
             notice = "Allow MySpaces to switch desktops in Accessibility settings."
             Permissions.requestAccessibility()
@@ -56,8 +59,10 @@ final class AppModel: ObservableObject {
             break
         }
         let target = row.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        switchInFlight = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + plan.verificationDelay) { [weak self] in
             guard let self else { return }
+            self.switchInFlight = false
             self.refresh()
             if self.rows.first(where: { $0.space.isCurrent })?.id != target {
                 self.notice = "Didn't reach that desktop. Enable direct switching in Settings."

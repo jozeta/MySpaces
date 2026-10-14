@@ -44,4 +44,12 @@ final class NavigationPlannerTests: XCTestCase {
         let noCurrent = [desktop(1, ""), desktop(2, "B")]
         XCTAssertEqual(NavigationPlanner.plan(to: noCurrent[1], in: noCurrent, hotkeys: stepOnly), .unavailable)
     }
+
+    func testVerificationDelayGrowsWithSteps() {
+        XCTAssertEqual(NavigationPlan.direct(right).verificationDelay, 1.0, accuracy: 0.001)
+        XCTAssertEqual(NavigationPlan.step(right, count: 1).verificationDelay, 1.4, accuracy: 0.001)
+        XCTAssertEqual(NavigationPlan.step(right, count: 5).verificationDelay, 3.0, accuracy: 0.001)
+        XCTAssertEqual(NavigationPlan.alreadyThere.verificationDelay, 0)
+        XCTAssertEqual(NavigationPlan.unavailable.verificationDelay, 0)
+    }
 }

@@ -3,8 +3,9 @@ import XCTest
 
 final class FakeSource: SpacesSource {
     var result: Result<[Space], Error>
+    var isFallback = false
     init(_ spaces: [Space]) { result = .success(spaces) }
-    func currentSpaces() throws -> [Space] { try result.get() }
+    func currentSpaces() throws -> SpacesRead { SpacesRead(spaces: try result.get(), isFallback: isFallback) }
 }
 
 struct FakeHotkeys: HotkeySource {
@@ -64,6 +65,18 @@ final class SpacesControllerTests: XCTestCase {
         XCTAssertEqual(store.name(for: "B"), "Keep")
         XCTAssertEqual(c.lastError, "Couldn't read Spaces")
         XCTAssertEqual(c.rows.count, 2, "keeps last good rows")
+    }
+
+    func testFallbackReadNeverPrunes() throws {
+        let (c, source, store) = make([desktop(1, "", current: true), desktop(2, "B")])
+        c.refresh()
+        try c.rename(key: "main:Main", to: "Development")
+        // The plist fallback names the display differently and may lag behind.
+        source.result = .success([desktop(1, "", current: true, display: "OTHER-ID")])
+        source.isFallback = true
+        c.refresh(); c.refresh(); c.refresh()
+        XCTAssertEqual(store.name(for: "main:Main"), "Development")
+        XCTAssertEqual(c.rows.count, 1, "fallback data is still shown")
     }
 
     func testSwitchPostsPlannedKeys() {

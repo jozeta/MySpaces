@@ -7,6 +7,17 @@ public enum NavigationPlan: Equatable {
     case unavailable
 }
 
+extension NavigationPlan {
+    /// How long to wait before checking that a switch arrived: each step is one slide animation.
+    public var verificationDelay: TimeInterval {
+        switch self {
+        case .direct: return 1.0
+        case .step(_, let count): return 1.0 + 0.4 * Double(count)
+        case .alreadyThere, .unavailable: return 0
+        }
+    }
+}
+
 public enum NavigationPlanner {
     /// `displaySpaces` are the Spaces of the target's display, in Mission Control order.
     public static func plan(to target: Space, in displaySpaces: [Space], hotkeys: SpaceHotkeys) -> NavigationPlan {
