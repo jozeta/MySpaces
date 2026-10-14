@@ -8,7 +8,8 @@ final class MissionControlDetector {
     private var timer: Timer?
 
     func start() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        // 60 Hz (~0.12 ms per check): names are timed against the moment Mission Control opens.
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
     }

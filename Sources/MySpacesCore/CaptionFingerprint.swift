@@ -5,7 +5,7 @@ import Foundation
 /// capture to the snapshot taken when names were drawn tells, within one frame and without OCR,
 /// whether the captions are still exactly there (show / keep names) or have moved or vanished
 /// (Mission Control closing, bar sliding or expanding: hide names).
-public struct CaptionFingerprint: Equatable, Sendable {
+public struct CaptionFingerprint: Equatable, Sendable, Codable {
     /// Mean absolute grey difference (0...1) below which two snapshots are the same captions.
     public static let matchThreshold: Double = 0.04
     static let sampleWidth = 48, sampleHeight = 12

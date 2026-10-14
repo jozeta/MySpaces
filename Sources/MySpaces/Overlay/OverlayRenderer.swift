@@ -11,7 +11,8 @@ final class OverlayRenderer {
         windows.removeAll()
     }
 
-    func show(_ items: [(LabelPlacement, PatchStyle)]) {
+    /// `fadeIn` > 0 fades the names in, in step with Mission Control's own caption animation.
+    func show(_ items: [(LabelPlacement, PatchStyle)], fadeIn: TimeInterval = 0) {
         hideAll()
         guard let screen = NSScreen.screens.first, !items.isEmpty else { return }
         // One size for the whole row: OCR box heights vary per caption, Mission Control's don't.
@@ -25,6 +26,14 @@ final class OverlayRenderer {
             let aligned = LabelPlacement(rect: CGRect(x: r.minX, y: rowMidY - r.height / 2, width: r.width, height: r.height),
                                          name: placement.name, spaceKey: placement.spaceKey, maxWidth: placement.maxWidth)
             windows.append(makeWindow(aligned, style, fontSize: fontSize, screenHeight: screen.frame.height))
+        }
+        if fadeIn > 0 {
+            windows.forEach { $0.alphaValue = 0 }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = fadeIn
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                windows.forEach { $0.animator().alphaValue = 1 }
+            }
         }
     }
 

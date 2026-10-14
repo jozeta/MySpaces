@@ -12,7 +12,7 @@ public struct RecognizedLabel: Equatable, Sendable {
     }
 }
 
-public struct LabelPlacement: Equatable, Sendable {
+public struct LabelPlacement: Equatable, Sendable, Codable {
     public let rect: CGRect
     public let name: String
     public let spaceKey: String

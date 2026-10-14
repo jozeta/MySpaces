@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-public enum PatchStyle: Equatable, Sendable {
+public enum PatchStyle: Equatable, Sendable, Codable {
     /// Paint over the caption with this sRGB colour, then draw the name.
     case native(red: CGFloat, green: CGFloat, blue: CGFloat)
     /// Background too busy to match: use the frosted pill.

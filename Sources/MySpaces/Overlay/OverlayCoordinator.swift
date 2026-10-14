@@ -18,6 +18,14 @@ final class OverlayCoordinator {
     /// Caption fingerprint watch rate while Mission Control is open (~25 ms per capture).
     static let fingerprintInterval: TimeInterval = 1.0 / 30
     static let maxReferences = 12
+    // Measured relative to Mission Control opening: captions start appearing ~0.19 s after the
+    // Dock window appears and land ~0.37 s; after a hover the expanded captions land ~0.28 s
+    // after they start moving. Remembered layouts fade in over that window instead of after it.
+    static let anticipateOpenDelay: TimeInterval = 0.17
+    static let anticipateExpandDelay: TimeInterval = 0.12
+    static let fadeDuration: TimeInterval = 0.17
+    /// An anticipated layout must be confirmed by an exact fingerprint match within this time.
+    static let anticipationGrace: TimeInterval = 0.9
     static let missLimit = 5
     private static let rowsKey = "captionRowMidYs.v2"
 
@@ -35,14 +43,49 @@ final class OverlayCoordinator {
     /// Caption rows seen before (collapsed and expanded bar), in points from the top.
     private var knownRows: [CGFloat]
     /// A layout that was drawn before: its caption snapshot, and the names to draw over it.
-    private struct Reference {
+    private struct Reference: Codable {
         let signature: String
         let fingerprint: CaptionFingerprint
         let rects: [CGRect]
-        let styled: [(LabelPlacement, PatchStyle)]
+        let placements: [LabelPlacement]
+        let styles: [PatchStyle]
+
+        init(signature: String, fingerprint: CaptionFingerprint, styled: [(LabelPlacement, PatchStyle)]) {
+            self.signature = signature
+            self.fingerprint = fingerprint
+            self.rects = styled.map(\.0.rect)
+            self.placements = styled.map(\.0)
+            self.styles = styled.map(\.1)
+        }
+
+        var styled: [(LabelPlacement, PatchStyle)] { Array(zip(placements, styles)) }
         var bandHeight: CGFloat { (rects.map(\.maxY).max() ?? 0) + 4 }
+        var key: String { "\(signature)@\(Int(rects.first?.midY ?? 0))" }
     }
-    private var references: [Reference] = []
+
+    /// Saved between launches so the first open after launch is as fast as the rest.
+    private struct Layouts: Codable {
+        var references: [Reference] = []
+        /// Signature → the layout first shown when Mission Control opens.
+        var opening: [String: Reference] = [:]
+        /// Reference key → the layout that follows when the pointer expands the bar.
+        var transitions: [String: Reference] = [:]
+    }
+    private static var layoutsURL: URL {
+        NameStore.defaultURL.deletingLastPathComponent().appendingPathComponent("layouts.json")
+    }
+    private var layouts = Layouts()
+    private var references: [Reference] {
+        get { layouts.references }
+        set { layouts.references = newValue }
+    }
+    private var openedAt = Date.distantPast
+    private var firstShowInSession = true
+    /// Shown ahead of the captions; not yet confirmed by an exact fingerprint match.
+    private var anticipatedUntil: Date?
+    private var shownConfirmed = false
+    private var pendingTransitionFrom: Reference?
+    private var pendingTransitionAt = Date.distantPast
     private var shownReference: Reference?
     private var shownAt = Date.distantPast
     private var fingerprintTimer: Timer?
@@ -63,6 +106,15 @@ final class OverlayCoordinator {
     init(model: AppModel) {
         self.model = model
         knownRows = (UserDefaults.standard.array(forKey: Self.rowsKey) as? [Double])?.map { CGFloat($0) } ?? []
+        if let data = try? Data(contentsOf: Self.layoutsURL),
+           let saved = try? JSONDecoder().decode(Layouts.self, from: data) {
+            layouts = saved
+        }
+    }
+
+    private func saveLayouts() {
+        guard let data = try? JSONEncoder().encode(layouts) else { return }
+        try? data.write(to: Self.layoutsURL, options: .atomic)
     }
 
     func start() {
@@ -78,6 +130,13 @@ final class OverlayCoordinator {
         gateSession += 1
         if open {
             gate.open()
+            openedAt = Date()
+            firstShowInSession = true
+            anticipatedUntil = nil
+            pendingTransitionFrom = nil
+            if let opening = layouts.opening[signature()] {
+                anticipate(opening, after: Self.anticipateOpenDelay)
+            }
             forceFullScan = false
             candidateRow = nil
             if knownRows.isEmpty {
@@ -102,7 +161,9 @@ final class OverlayCoordinator {
             watchTimer?.invalidate()
             fingerprintTimer?.invalidate()
             settlingSince = nil
+            anticipatedUntil = nil
             hide()
+            saveLayouts()
             model.refresh()
         }
     }
@@ -150,23 +211,77 @@ final class OverlayCoordinator {
             await MainActor.run {
                 self.fingerprintInFlight = false
                 guard capture != nil, session == self.gateSession, self.detector.isOpen else { return }
-                if self.shownReference != nil {
-                    if matches.first != true {
-                        self.hide()
-                        self.beginSettling()
+                if let current = self.shownReference {
+                    if matches.first == true {
+                        self.confirm(current)
+                    } else if let until = self.anticipatedUntil, Date() < until {
+                        // Shown ahead of the captions; they are still animating into place.
+                    } else {
+                        self.layoutChanged(from: current)
                     }
                 } else if let i = matches.firstIndex(of: true) {
                     let ref = candidates[i]
                     self.settlingSince = nil
                     self.render(ref)
+                    self.confirm(ref)
                 }
             }
         }
     }
 
-    private func render(_ ref: Reference) {
+    /// Show a remembered layout ahead of its captions, timed to their animation.
+    private func anticipate(_ ref: Reference, after delay: TimeInterval) {
+        let session = gateSession
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, session == self.gateSession, self.detector.isOpen, self.shownReference == nil else { return }
+            self.render(ref, fadeIn: Self.fadeDuration)
+            self.shownConfirmed = false
+            self.anticipatedUntil = Date().addingTimeInterval(Self.anticipationGrace)
+        }
+    }
+
+    /// The shown captions changed (Mission Control closing, or the bar expanding/collapsing).
+    private func layoutChanged(from old: Reference) {
+        let wasConfirmed = shownConfirmed
+        anticipatedUntil = nil
+        hide()
+        // Pointer in the bar means it is expanding/collapsing, not closing: the next layout is
+        // predictable. Only learn from or predict after confirmed layouts, so a wrong guess
+        // cannot repeat itself.
+        if wasConfirmed, pointerY() < old.bandHeight + 30 {
+            pendingTransitionFrom = old
+            pendingTransitionAt = Date()
+            if let next = layouts.transitions[old.key] {
+                anticipate(next, after: Self.anticipateExpandDelay)
+            }
+        }
+        beginSettling()
+    }
+
+    /// An exact fingerprint match: the layout is really there. Learn when it shows up.
+    private func confirm(_ ref: Reference) {
+        anticipatedUntil = nil
+        guard !shownConfirmed else { return }
+        shownConfirmed = true
+        if firstShowInSession, Date().timeIntervalSince(openedAt) < 1.5 {
+            layouts.opening[ref.signature] = ref
+        }
+        firstShowInSession = false
+        if let from = pendingTransitionFrom, Date().timeIntervalSince(pendingTransitionAt) < 1.5 {
+            layouts.transitions[from.key] = ref
+        }
+        pendingTransitionFrom = nil
+    }
+
+    /// Pointer distance from the top of the main screen, in points.
+    private func pointerY() -> CGFloat {
+        guard let screen = NSScreen.screens.first else { return .greatestFiniteMagnitude }
+        return screen.frame.maxY - NSEvent.mouseLocation.y
+    }
+
+    private func render(_ ref: Reference, fadeIn: TimeInterval = 0) {
         if !LayoutStabilizer.same(ref.styled.map(\.0), shown) {
-            renderer.show(ref.styled)
+            renderer.show(ref.styled, fadeIn: fadeIn)
             ScreenBandCapture.invalidateFilter()
             shown = ref.styled.map(\.0)
         }
@@ -181,6 +296,7 @@ final class OverlayCoordinator {
     }
 
     private func hide() {
+        shownConfirmed = false
         renderer.hideAll()
         ScreenBandCapture.invalidateFilter()
         shown = []
@@ -258,6 +374,8 @@ final class OverlayCoordinator {
         scanInFlight = false
         // The fingerprint watch drew a newer layout while this scan was running: it is stale.
         if shownReference != nil, started < shownAt { return }
+        // A remembered layout is fading in ahead of its captions; the fingerprint confirms it.
+        if anticipatedUntil != nil { return }
         let row = LabelMapper.captionRow(in: labels)
         // A known row with no captions means the bar moved or changed shape, not a mismatch.
         // While settling the captions may simply not be drawn yet, so keep probing the fast path.
@@ -304,9 +422,10 @@ final class OverlayCoordinator {
             if let row { remember(row: row.midY) }
             guard let styled else { return }
             if let fingerprint {
-                let ref = Reference(signature: sig, fingerprint: fingerprint, rects: styled.map(\.0.rect), styled: styled)
+                let ref = Reference(signature: sig, fingerprint: fingerprint, styled: styled)
                 remember(ref)
                 render(ref)
+                confirm(ref)
             } else if !LayoutStabilizer.same(placements, shown) { // avoid flicker
                 renderer.show(styled)
                 ScreenBandCapture.invalidateFilter()
