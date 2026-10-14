@@ -32,10 +32,15 @@ enum Permissions {
     static func reset(_ service: String) {
         guard let id = Bundle.main.bundleIdentifier else { return }
         let task = Process()
+        let output = Pipe()
         task.launchPath = "/usr/bin/tccutil"
         task.arguments = ["reset", service, id]
+        task.standardOutput = output
+        task.standardError = output
         try? task.run()
         task.waitUntilExit()
+        let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        log.notice("tccutil reset \(service, privacy: .public): exit \(task.terminationStatus) \(text, privacy: .public)")
     }
 
     private static func open(_ url: String) {

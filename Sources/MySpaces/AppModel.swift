@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
 
     init(controller: SpacesController) {
         self.controller = controller
+        log.notice("launch: Accessibility trusted=\(Permissions.accessibilityGranted) Screen Recording=\(Permissions.screenRecordingGranted) path=\(Bundle.main.bundlePath, privacy: .public)")
         refresh()
     }
 
@@ -44,8 +45,14 @@ final class AppModel: ObservableObject {
     func refreshPermissions() {
         let ax = Permissions.accessibilityGranted
         let sr = Permissions.screenRecordingGranted
-        if ax != accessibilityGranted { accessibilityGranted = ax }
-        if sr != screenRecordingGranted { screenRecordingGranted = sr }
+        if ax != accessibilityGranted {
+            accessibilityGranted = ax
+            log.notice("Accessibility trusted changed: \(ax)")
+        }
+        if sr != screenRecordingGranted {
+            screenRecordingGranted = sr
+            log.notice("Screen Recording granted changed: \(sr)")
+        }
     }
 
     /// Shows the macOS prompt, which also adds MySpaces to the Accessibility list.
