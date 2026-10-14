@@ -12,6 +12,8 @@ public final class OverlayScanGate {
     public enum Decision: Equatable {
         case show([LabelPlacement])
         case hide
+        /// Captions not (fully) drawn yet while the bar is appearing or animating: scan again.
+        case retry
         case ignore
     }
 
@@ -44,9 +46,11 @@ public final class OverlayScanGate {
     }
 
     /// `placements` is LabelMapper's result: nil means the captions did not match the desktops.
-    public func decide(_ ticket: ScanTicket, placements: [LabelPlacement]?) -> Decision {
+    /// While `settling` (bar appearing or changing shape) a mismatch only means "not drawn yet".
+    public func decide(_ ticket: ScanTicket, placements: [LabelPlacement]?, settling: Bool = false) -> Decision {
         guard isOpen, ticket.session == session, ticket.sequence > lastDecided else { return .ignore }
         lastDecided = ticket.sequence
+        if placements == nil, settling, !disabled { return .retry }
         guard !disabled, let placements else {
             disabled = true
             return .hide

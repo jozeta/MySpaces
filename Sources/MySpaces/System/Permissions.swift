@@ -11,7 +11,8 @@ enum Permissions {
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
     }
 
-    static func requestScreenRecording() { _ = CGRequestScreenCaptureAccess() }
+    @discardableResult
+    static func requestScreenRecording() -> Bool { CGRequestScreenCaptureAccess() }
 
     static func openAccessibilitySettings() {
         open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")

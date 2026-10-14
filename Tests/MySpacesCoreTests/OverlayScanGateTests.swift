@@ -46,4 +46,13 @@ final class OverlayScanGateTests: XCTestCase {
     func testNoScansWhileClosed() {
         XCTAssertNil(OverlayScanGate().issueScan())
     }
+
+    func testMismatchWhileSettlingRetriesWithoutDisabling() throws {
+        let gate = OverlayScanGate()
+        gate.open()
+        let t1 = try XCTUnwrap(gate.issueScan())
+        XCTAssertEqual(gate.decide(t1, placements: nil, settling: true), .retry)
+        let t2 = try XCTUnwrap(gate.issueScan(), "captions not drawn yet must not disable the session")
+        XCTAssertEqual(gate.decide(t2, placements: p, settling: true), .show(p))
+    }
 }

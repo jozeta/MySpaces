@@ -58,6 +58,14 @@ public enum LabelMapper {
         }
     }
 
+    /// The band covered by the "Desktop N" captions (other text is ignored), or nil if none.
+    public static func captionRow(in labels: [RecognizedLabel]) -> (midY: CGFloat, maxY: CGFloat)? {
+        let captions = labels.filter { desktopNumber(in: $0.text) != nil }
+        guard !captions.isEmpty else { return nil }
+        let mid = captions.map(\.rect.midY).reduce(0, +) / CGFloat(captions.count)
+        return (mid, captions.map(\.rect.maxY).max()!)
+    }
+
     static func maxWidth(for label: RecognizedLabel, among labels: [RecognizedLabel]) -> CGFloat {
         let distances = labels
             .filter { $0 != label && abs($0.rect.midY - label.rect.midY) < sameRowTolerance }

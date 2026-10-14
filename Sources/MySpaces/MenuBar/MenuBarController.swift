@@ -10,6 +10,8 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     init(model: AppModel, openSettings: @escaping () -> Void) {
         self.model = model
         super.init()
+        // A stable autosave name lets macOS remember where the user ⌘-dragged the icon.
+        statusItem.autosaveName = "MySpacesStatusItem"
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "square.stack", accessibilityDescription: "MySpaces")
             button.image?.isTemplate = true
@@ -30,12 +32,14 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             popover.performClose(nil)
         } else if let button = statusItem.button {
             model.refresh()
+            model.startPermissionPolling()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
     }
 
     func popoverDidClose(_ notification: Notification) {
+        model.stopPermissionPolling()
         model.editingKey = nil
         model.notice = nil
     }

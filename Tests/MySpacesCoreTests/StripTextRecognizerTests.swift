@@ -53,4 +53,20 @@ final class StripTextRecognizerTests: XCTestCase {
         XCTAssertEqual(d1.rect.midX, 969 / 2, accuracy: 8)
         XCTAssertEqual(d1.rect.midY, 70 / 2, accuracy: 8)
     }
+
+    func testTargetedRowReadsCollapsedCaptions() throws {
+        let labels = try StripTextRecognizer().recognize(in: fixture("mc-collapsed"), pointsPerPixel: 1, rowMidYs: [70])
+        XCTAssertEqual(labels.compactMap { LabelMapper.desktopNumber(in: $0.text) }.sorted(), [1, 2, 3, 4, 5])
+    }
+
+    func testTargetedRowReadsExpandedCaptions() throws {
+        let labels = try StripTextRecognizer().recognize(in: fixture("mc-expanded-fullscreen"), pointsPerPixel: 1, rowMidYs: [70, 188])
+        XCTAssertEqual(labels.compactMap { LabelMapper.desktopNumber(in: $0.text) }.sorted(), [1, 2, 3, 4, 5])
+        XCTAssertTrue(labels.contains { $0.text == "validate" })
+    }
+
+    func testTargetedRowWithNoCaptionsFindsNothing() throws {
+        let labels = try StripTextRecognizer().recognize(in: fixture("mc-collapsed"), pointsPerPixel: 1, rowMidYs: [20])
+        XCTAssertTrue(labels.compactMap { LabelMapper.desktopNumber(in: $0.text) }.isEmpty)
+    }
 }

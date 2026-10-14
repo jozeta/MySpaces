@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
     @Published var editingKey: String?
     @Published private(set) var multiDisplayNote: String?
     @Published var overlayStatus: String?
+    @Published private(set) var accessibilityGranted = Permissions.accessibilityGranted
+    @Published private(set) var screenRecordingGranted = Permissions.screenRecordingGranted
+    @Published private(set) var screenRecordingRequested = false
 
     let controller: SpacesController
     private var switchInFlight = false
@@ -19,6 +22,50 @@ final class AppModel: ObservableObject {
     init(controller: SpacesController) {
         self.controller = controller
         refresh()
+    }
+
+    private var permissionTimer: Timer?
+
+    /// While the popover is open, keep the permission cards in sync with System Settings.
+    func startPermissionPolling() {
+        refreshPermissions()
+        permissionTimer?.invalidate()
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPermissions() }
+        }
+    }
+
+    func stopPermissionPolling() {
+        permissionTimer?.invalidate()
+        permissionTimer = nil
+    }
+
+    func refreshPermissions() {
+        let ax = Permissions.accessibilityGranted
+        let sr = Permissions.screenRecordingGranted
+        if ax != accessibilityGranted { accessibilityGranted = ax }
+        if sr != screenRecordingGranted { screenRecordingGranted = sr }
+    }
+
+    /// Shows the macOS prompt, which also adds MySpaces to the Accessibility list.
+    func requestAccessibility() {
+        Permissions.requestAccessibility()
+    }
+
+    /// The first request shows the macOS prompt and registers MySpaces; later requests can't
+    /// prompt again, so open the settings pane as well. macOS applies the grant on relaunch.
+    func requestScreenRecording() {
+        if !Permissions.requestScreenRecording() { Permissions.openScreenRecordingSettings() }
+        screenRecordingRequested = true
+    }
+
+    func relaunch() {
+        let path = Bundle.main.bundlePath
+        let task = Process()
+        task.launchPath = "/bin/sh"
+        task.arguments = ["-c", "sleep 0.5; /usr/bin/open \"\(path)\""]
+        try? task.run()
+        NSApp.terminate(nil)
     }
 
     func refresh() {
@@ -44,8 +91,8 @@ final class AppModel: ObservableObject {
         // A second click before the first switch lands would plan from a stale current desktop.
         guard !switchInFlight else { return }
         guard Permissions.accessibilityGranted else {
-            notice = "Allow MySpaces to switch desktops in Accessibility settings."
-            Permissions.requestAccessibility()
+            notice = "Allow Accessibility access to switch desktops."
+            requestAccessibility()
             return
         }
         let plan = controller.switchTo(key: row.id)

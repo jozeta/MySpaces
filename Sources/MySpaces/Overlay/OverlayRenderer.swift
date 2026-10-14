@@ -13,15 +13,23 @@ final class OverlayRenderer {
 
     func show(_ items: [(LabelPlacement, PatchStyle)]) {
         hideAll()
-        guard let screen = NSScreen.screens.first else { return }
+        guard let screen = NSScreen.screens.first, !items.isEmpty else { return }
+        // One size for the whole row: OCR box heights vary per caption, Mission Control's don't.
+        let heights = items.map(\.0.rect.height).sorted()
+        let fontSize = min(14, max(10, (heights[heights.count / 2] * 0.68).rounded()))
+        // ...and one centre line, so names in a row share a baseline.
+        let mids = items.map(\.0.rect.midY).sorted()
+        let rowMidY = mids[mids.count / 2]
         for (placement, style) in items {
-            windows.append(makeWindow(placement, style, screenHeight: screen.frame.height))
+            let r = placement.rect
+            let aligned = LabelPlacement(rect: CGRect(x: r.minX, y: rowMidY - r.height / 2, width: r.width, height: r.height),
+                                         name: placement.name, spaceKey: placement.spaceKey, maxWidth: placement.maxWidth)
+            windows.append(makeWindow(aligned, style, fontSize: fontSize, screenHeight: screen.frame.height))
         }
     }
 
-    private func makeWindow(_ p: LabelPlacement, _ style: PatchStyle, screenHeight: CGFloat) -> NSWindow {
-        // Matches Mission Control's caption style (regular weight, ~0.68 × caption box height).
-        let fontSize = min(14, max(10, (p.rect.height * 0.68).rounded()))
+    /// Matches Mission Control's caption style (regular weight, ~0.68 × caption box height).
+    private func makeWindow(_ p: LabelPlacement, _ style: PatchStyle, fontSize: CGFloat, screenHeight: CGFloat) -> NSWindow {
         let label = NSTextField(labelWithString: p.name)
         label.font = .systemFont(ofSize: fontSize, weight: .regular)
         label.textColor = NSColor.white.withAlphaComponent(0.92)

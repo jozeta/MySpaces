@@ -33,6 +33,22 @@ public struct StripTextRecognizer: Sendable {
         return found.sorted { $0.rect.minX < $1.rect.minX }
     }
 
+    /// Fast path: one strip centred on each known caption row (~0.06 s per row instead of
+    /// scanning the whole band).
+    public func recognize(in image: CGImage, pointsPerPixel: CGFloat, rowMidYs: [CGFloat]) throws -> [RecognizedLabel] {
+        var found: [RecognizedLabel] = []
+        for mid in rowMidYs {
+            let top = max(0, mid - stripHeight / 2)
+            let pixelRect = CGRect(x: 0, y: (top / pointsPerPixel).rounded(.down),
+                                   width: CGFloat(image.width), height: (stripHeight / pointsPerPixel).rounded(.down))
+            guard let strip = image.cropping(to: pixelRect) else { continue }
+            for label in try recognizeStrip(strip, top: top, pointsPerPixel: pointsPerPixel) {
+                merge(label, into: &found)
+            }
+        }
+        return found.sorted { $0.rect.minX < $1.rect.minX }
+    }
+
     /// Loads the Vision model (~24 s cold on first use) so later scans are fast.
     public static func prewarm() {
         let size = 64

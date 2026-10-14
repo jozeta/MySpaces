@@ -1,9 +1,13 @@
 import MySpacesCore
 import SwiftUI
 
+/// Every block shares one 14 pt leading edge: header, permission cards, row titles, footer.
+private let edge: CGFloat = 14
+
 struct SpaceListView: View {
     @ObservedObject var model: AppModel
     var openSettings: () -> Void
+    @AppStorage("dismissedAccessibilityHint") private var dismissedAccessibilityHint = false
     @AppStorage("dismissedScreenRecordingHint") private var dismissedScreenRecordingHint = false
 
     var body: some View {
@@ -12,9 +16,11 @@ struct SpaceListView: View {
                 Text("MySpaces").font(.system(size: 13, weight: .semibold))
                 Text("Your desktops, organized.").font(.system(size: 11)).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
+            .padding(.horizontal, edge).padding(.top, 12).padding(.bottom, 10)
 
             Divider().opacity(0.5)
+
+            permissionCards
 
             if let error = model.errorMessage {
                 HStack {
@@ -22,35 +28,20 @@ struct SpaceListView: View {
                     Spacer()
                     Button("Retry") { model.refresh() }.controlSize(.small)
                 }
-                .padding(.horizontal, 14).padding(.vertical, 8)
+                .padding(.horizontal, edge).padding(.top, 8)
             }
 
-            if !Permissions.accessibilityGranted {
-                PermissionRow(text: "Switching desktops needs Accessibility access.",
-                              action: Permissions.openAccessibilitySettings)
-            }
-            if !Permissions.screenRecordingGranted && !dismissedScreenRecordingHint {
-                PermissionRow(text: "Names in Mission Control need Screen Recording.",
-                              action: {
-                                  Permissions.requestScreenRecording()
-                                  Permissions.openScreenRecordingSettings()
-                              },
-                              onDismiss: { dismissedScreenRecordingHint = true })
-            } else if let status = model.overlayStatus {
-                Text(status).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 14).padding(.vertical, 6)
-            }
-
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 ForEach(model.rows) { row in
                     SpaceRowView(row: row, model: model)
                 }
             }
-            .padding(6)
+            .padding(.horizontal, 6).padding(.vertical, 6)
 
-            if let note = model.notice ?? model.multiDisplayNote {
+            if let note = model.notice ?? model.overlayStatus ?? model.multiDisplayNote {
                 Text(note).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 14).padding(.bottom, 6)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, edge).padding(.bottom, 8)
             }
 
             Divider().opacity(0.5)
@@ -60,9 +51,47 @@ struct SpaceListView: View {
                 Spacer()
                 Text("MySpaces \(Bundle.main.shortVersion)").font(.system(size: 10)).foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 14).padding(.vertical, 9)
+            .padding(.horizontal, edge).padding(.vertical, 9)
         }
-        .frame(width: 280)
+        .frame(width: 300)
+    }
+
+    @ViewBuilder private var permissionCards: some View {
+        let showAX = !model.accessibilityGranted && !dismissedAccessibilityHint
+        let showSR = !model.screenRecordingGranted && !dismissedScreenRecordingHint
+        if showAX || showSR {
+            VStack(spacing: 6) {
+                if showAX {
+                    PermissionCard(
+                        symbol: "arrow.left.arrow.right",
+                        title: "Switch desktops from this menu",
+                        detail: "MySpaces presses your Mission Control shortcuts for you. macOS asks for Accessibility access to allow that.",
+                        actionTitle: "Allow…",
+                        action: model.requestAccessibility,
+                        onDismiss: { dismissedAccessibilityHint = true })
+                }
+                if showSR {
+                    if model.screenRecordingRequested {
+                        PermissionCard(
+                            symbol: "arrow.clockwise",
+                            title: "Relaunch to finish",
+                            detail: "After turning on MySpaces under Screen & System Audio Recording, relaunch so macOS applies it.",
+                            actionTitle: "Relaunch",
+                            action: model.relaunch,
+                            onDismiss: { dismissedScreenRecordingHint = true })
+                    } else {
+                        PermissionCard(
+                            symbol: "rectangle.3.group",
+                            title: "Show names in Mission Control",
+                            detail: "MySpaces reads the desktop labels on screen to place your names. Nothing is saved or sent anywhere.",
+                            actionTitle: "Allow…",
+                            action: model.requestScreenRecording,
+                            onDismiss: { dismissedScreenRecordingHint = true })
+                    }
+                }
+            }
+            .padding(.horizontal, edge - 10).padding(.top, 8)
+        }
     }
 }
 
@@ -74,12 +103,7 @@ private struct SpaceRowView: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: row.space.isCurrent ? "checkmark" : "circle")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(row.space.isCurrent ? Color.accentColor : .clear)
-                .frame(width: 12)
-
+        HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
                 if model.editingKey == row.id {
                     TextField("Name", text: $draft)
@@ -99,15 +123,21 @@ private struct SpaceRowView: View {
 
             if row.isRenamable && model.editingKey != row.id {
                 Button { model.editingKey = row.id } label: {
-                    Image(systemName: "pencil").font(.system(size: 11))
+                    Image(systemName: "pencil").font(.system(size: 11)).frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .opacity(hovering ? 1 : 0.35)
+                .opacity(hovering ? 1 : 0)
                 .help("Rename")
             }
+
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .opacity(row.space.isCurrent ? 1 : 0)
+                .frame(width: 14)
         }
-        .padding(.horizontal, 8).padding(.vertical, 6)
+        .padding(.horizontal, edge - 6).padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Color.primary.opacity(0.06) : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
@@ -115,23 +145,33 @@ private struct SpaceRowView: View {
     }
 }
 
-struct PermissionRow: View {
-    let text: String
+/// A readable two-line permission explanation with one clear action.
+private struct PermissionCard: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    let actionTitle: String
     let action: () -> Void
-    var onDismiss: (() -> Void)? = nil
+    let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "lock").font(.system(size: 11)).foregroundStyle(.secondary)
-            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer()
-            Button("Allow…", action: action).controlSize(.small)
-            if let onDismiss {
-                Button(action: onDismiss) { Image(systemName: "xmark").font(.system(size: 9)) }
-                    .buttonStyle(.plain).foregroundStyle(.tertiary).help("Not now")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 14)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 12, weight: .medium))
+                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Not now", action: onDismiss).buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+                Button(actionTitle, action: action).controlSize(.small).buttonStyle(.borderedProminent)
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 6)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
     }
 }
 

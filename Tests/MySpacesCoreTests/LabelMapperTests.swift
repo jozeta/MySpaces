@@ -60,4 +60,11 @@ final class LabelMapperTests: XCTestCase {
             labels: [label("Desktop 1", x: 500)], displaySpaces: [desktop(1, "")], names: ["main:Main": "Solo"]))
         XCTAssertEqual(result[0].maxWidth, 240)
     }
+
+    func testCaptionRowUsesDesktopCaptionsOnly() throws {
+        let row = try XCTUnwrap(LabelMapper.captionRow(in: labels + [label("Explorer", x: 300, y: 260)]))
+        XCTAssertEqual(row.midY, 188, accuracy: 0.1)
+        XCTAssertEqual(row.maxY, 196, accuracy: 0.1)
+        XCTAssertNil(LabelMapper.captionRow(in: [label("Explorer", x: 300, y: 260)]))
+    }
 }
