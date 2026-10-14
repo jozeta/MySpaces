@@ -79,7 +79,7 @@ Swift, SwiftUI + AppKit, single app target plus a unit-test target.
   (`.floating`, `.canJoinAllSpaces + .stationary + .ignoresCycle +
   .fullScreenAuxiliary`). Samples bar pixels left and right of the caption,
   paints a matching patch over "Desktop N", and draws the name in the native
-  caption font/colour. If the sampled background variance exceeds a threshold,
+  caption font/colour. If the sampled background luminance standard deviation exceeds 0.08 (0–1 scale; tuned against fixtures),
   that label uses the frosted pill instead. All overlays hide immediately on MC
   close.
 
