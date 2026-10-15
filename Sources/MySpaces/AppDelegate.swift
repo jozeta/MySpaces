@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBar: MenuBarController!
     private var overlay: OverlayCoordinator!
     private var settings: SettingsWindowController!
+    private let switchHUD = SwitchHUD()
+    private var currentKey: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = NameStore(fileURL: NameStore.defaultURL)
@@ -19,15 +21,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         overlay = OverlayCoordinator(model: model)
         overlay.start()
-        settings = SettingsWindowController(model: model, overlay: overlay)
+        settings = SettingsWindowController(model: model, overlay: overlay,
+                                            previewSwitchName: { [weak self] in self?.previewSwitchHUD() })
         menuBar = MenuBarController(model: model, openSettings: { [weak self] in self?.settings.show() })
 
         let center = NSWorkspace.shared.notificationCenter
+        currentKey = model.rows.first(where: \.space.isCurrent)?.id
         center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model.refresh() }
+            MainActor.assumeIsolated { self?.activeSpaceChanged() }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.refresh() }
         }
+    }
+
+    private func activeSpaceChanged() {
+        model.refresh()
+        guard let current = model.rows.first(where: \.space.isCurrent), current.id != currentKey else { return }
+        currentKey = current.id
+        if SwitchHUD.isEnabled { switchHUD.show(current.title) }
+    }
+
+    func previewSwitchHUD() {
+        switchHUD.show(model.rows.first(where: \.space.isCurrent)?.title ?? "Desktop 1")
     }
 }

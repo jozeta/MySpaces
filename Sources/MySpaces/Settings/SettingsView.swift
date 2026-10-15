@@ -6,6 +6,8 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     let overlay: OverlayCoordinator
+    let previewSwitchName: () -> Void
+    @AppStorage(SwitchHUD.enabledKey) private var showNameWhenSwitching = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var refreshTick = 0
 
@@ -16,6 +18,13 @@ struct SettingsView: View {
                            granted: Permissions.accessibilityGranted, open: Permissions.openAccessibilitySettings)
                 permission("Screen Recording", detail: "Show your names in Mission Control",
                            granted: Permissions.screenRecordingGranted, open: Permissions.openScreenRecordingSettings)
+            }
+            Section("Switching") {
+                Toggle(isOn: $showNameWhenSwitching) {
+                    Text("Show the desktop’s name when switching")
+                    Text("A large name in the middle of the screen, for about a second.")
+                }
+                Button("Preview", action: previewSwitchName).disabled(!showNameWhenSwitching)
             }
             Section("General") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
@@ -46,7 +55,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 520)
+        .frame(width: 460, height: 600)
     }
 
     private var report: String {

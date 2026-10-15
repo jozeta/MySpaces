@@ -25,6 +25,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             rootView: SpaceListView(model: model, openSettings: { [weak self] in
                 self?.popover.performClose(nil)
                 openSettings()
+            }, showAbout: { [weak self] in
+                self?.popover.performClose(nil)
+                Self.showAbout()
             }))
         // Report SwiftUI's height to the popover, so it resizes in place (anchored below the icon)
         // instead of keeping a stale size and growing upward off the screen.
@@ -43,6 +46,16 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    static func showAbout() {
+        NSApp.activate()
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "MySpaces",
+            .credits: NSAttributedString(
+                string: "Name your desktops and see the names in Mission Control and when you switch.",
+                attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]),
+        ])
     }
 
     func popoverDidClose(_ notification: Notification) {

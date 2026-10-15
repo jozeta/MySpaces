@@ -7,6 +7,7 @@ private let edge: CGFloat = 14
 struct SpaceListView: View {
     @ObservedObject var model: AppModel
     var openSettings: () -> Void
+    var showAbout: () -> Void
     @AppStorage("dismissedAccessibilityHint") private var dismissedAccessibilityHint = false
     @AppStorage("dismissedScreenRecordingHint") private var dismissedScreenRecordingHint = false
 
@@ -46,10 +47,11 @@ struct SpaceListView: View {
 
             Divider().opacity(0.5)
 
-            HStack {
-                Button("Manage Spaces…", action: openSettings).buttonStyle(.plain).font(.system(size: 12))
+            HStack(spacing: 12) {
+                Button("Settings…", action: openSettings).buttonStyle(.plain).font(.system(size: 12))
                 Spacer()
-                Text("MySpaces \(Bundle.main.shortVersion)").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Button("About", action: showAbout).buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, edge).padding(.vertical, 9)
         }

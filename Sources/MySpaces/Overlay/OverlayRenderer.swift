@@ -70,12 +70,14 @@ final class OverlayRenderer {
         let label = NSTextField(labelWithString: p.name)
         label.font = .systemFont(ofSize: text.size, weight: text.weight)
         label.textColor = NSColor.white.withAlphaComponent(text.opacity)
-        label.lineBreakMode = .byTruncatingTail
-        label.alignment = .center
+        label.lineBreakMode = .byClipping
         label.sizeToFit()
+        let fit = NameFit(textWidth: label.frame.width, minimumWidth: p.rect.width + 4, maximumWidth: p.maxWidth, padding: 8)
+        // A name too long for its slot starts at the left and fades out, instead of "Klar…".
+        label.alignment = fit.fades ? .left : .center
 
         let height = max(p.rect.height + 6, label.frame.height + 4)
-        let width = max(p.rect.width + 4, min(label.frame.width + 8, p.maxWidth))
+        let width = fit.width
         // The name's box, in points from the screen's top left.
         let nameBox = CGRect(x: p.rect.midX - width / 2, y: p.rect.midY - height / 2, width: width, height: height)
         var covered = nameBox
@@ -111,6 +113,16 @@ final class OverlayRenderer {
             background.layer?.addSublayer(pill)
         }
         label.frame = NSRect(x: box.minX + 4, y: box.minY + (height - label.frame.height) / 2, width: width - 8, height: label.frame.height)
+        if fit.fades {
+            label.wantsLayer = true
+            let mask = CAGradientLayer()
+            mask.frame = label.bounds
+            mask.startPoint = CGPoint(x: 0, y: 0.5)
+            mask.endPoint = CGPoint(x: 1, y: 0.5)
+            mask.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+            mask.locations = [0, NSNumber(value: Double(fit.fadeStart)), 1]
+            label.layer?.mask = mask
+        }
         background.addSubview(label)
         window.contentView?.addSubview(background)
         window.orderFrontRegardless()
