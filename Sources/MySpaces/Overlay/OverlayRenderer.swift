@@ -15,8 +15,7 @@ final class OverlayRenderer {
         offset = .zero
     }
 
-    /// `fadeIn` > 0 fades the names in, in step with Mission Control's own caption animation.
-    func show(_ items: [(LabelPlacement, PatchStyle)], fadeIn: TimeInterval = 0) {
+    func show(_ items: [(LabelPlacement, PatchStyle)]) {
         hideAll()
         guard let screen = NSScreen.screens.first, !items.isEmpty else { return }
         // One size for the whole row: OCR box heights vary per caption, Mission Control's don't.
@@ -32,14 +31,6 @@ final class OverlayRenderer {
             windows.append(makeWindow(aligned, style, fontSize: fontSize, screenHeight: screen.frame.height))
         }
         origins = windows.map(\.frame.origin)
-        if fadeIn > 0 {
-            windows.forEach { $0.alphaValue = 0 }
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = fadeIn
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                windows.forEach { $0.animator().alphaValue = 1 }
-            }
-        }
     }
 
     /// Moves every name by (dx, dy) points from where it was drawn (screen top-left coordinates),
@@ -53,6 +44,12 @@ final class OverlayRenderer {
         }
     }
 
+    /// The current positions become the new base: the layout itself was moved to where the names are.
+    func rebase() {
+        origins = windows.map(\.frame.origin)
+        offset = .zero
+    }
+
     /// Matches Mission Control's caption style (regular weight, ~0.68 × caption box height).
     private func makeWindow(_ p: LabelPlacement, _ style: PatchStyle, fontSize: CGFloat, screenHeight: CGFloat) -> NSWindow {
         let label = NSTextField(labelWithString: p.name)
@@ -64,8 +61,12 @@ final class OverlayRenderer {
 
         let height = max(p.rect.height + 6, label.frame.height + 4)
         let width = max(p.rect.width + 4, min(label.frame.width + 8, p.maxWidth))
-        let frame = NSRect(x: p.rect.midX - width / 2, y: screenHeight - p.rect.midY - height / 2,
-                           width: width, height: height)
+        // The name's box, in points from the screen's top left.
+        let nameBox = CGRect(x: p.rect.midX - width / 2, y: p.rect.midY - height / 2, width: width, height: height)
+        var covered = nameBox
+        if case let .backdrop(b) = style { covered = covered.union(b.rect) }
+        covered = covered.integral
+        let frame = NSRect(x: covered.minX, y: screenHeight - covered.maxY, width: covered.width, height: covered.height)
 
         let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         // Mission Control's Spaces bar is drawn above .floating/.modalPanel; Dock level and up show.
@@ -76,24 +77,48 @@ final class OverlayRenderer {
         window.ignoresMouseEvents = true
         window.hasShadow = false
 
-        let background: NSView
+        let background = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        background.wantsLayer = true
+        // The name's box inside the window (AppKit's bottom-left origin).
+        let box = NSRect(x: nameBox.minX - covered.minX, y: covered.maxY - nameBox.maxY, width: width, height: height)
         switch style {
-        case let .native(r, g, b):
-            background = NSView(frame: NSRect(origin: .zero, size: frame.size))
-            background.wantsLayer = true
-            background.layer?.backgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1).cgColor
-            background.layer?.cornerRadius = 4
+        case let .backdrop(b):
+            let scale = NSScreen.screens.first?.backingScaleFactor ?? 2
+            background.layer?.contents = Self.image(of: b, covering: covered, scale: scale)
+            background.layer?.contentsGravity = .resize
         case .pill:
             // Solid Graphite (#292D30) pill: predictable on any wallpaper, unlike a blur material.
-            background = NSView(frame: NSRect(origin: .zero, size: frame.size))
-            background.wantsLayer = true
-            background.layer?.backgroundColor = NSColor(srgbRed: 0x29 / 255, green: 0x2D / 255, blue: 0x30 / 255, alpha: 0.92).cgColor
-            background.layer?.cornerRadius = 6
+            // Fully opaque, or the caption underneath shows through.
+            let pill = CALayer()
+            pill.frame = box
+            pill.backgroundColor = NSColor(srgbRed: 0x29 / 255, green: 0x2D / 255, blue: 0x30 / 255, alpha: 1).cgColor
+            pill.cornerRadius = 6
+            background.layer?.addSublayer(pill)
         }
-        label.frame = NSRect(x: 4, y: (height - label.frame.height) / 2, width: width - 8, height: label.frame.height)
+        label.frame = NSRect(x: box.minX + 4, y: box.minY + (height - label.frame.height) / 2, width: width - 8, height: label.frame.height)
         background.addSubview(label)
         window.contentView?.addSubview(background)
         window.orderFrontRegardless()
         return window
+    }
+
+    /// The rebuilt background for `area` (points, screen top left), at the screen's pixel scale.
+    private static func image(of b: PatchBackdrop, covering area: CGRect, scale: CGFloat) -> CGImage? {
+        let w = max(1, Int((area.width * scale).rounded())), h = max(1, Int((area.height * scale).rounded()))
+        var pixels = [UInt8](repeating: 255, count: w * h * 4)
+        for y in 0..<h {
+            let py = area.minY + (CGFloat(y) + 0.5) / scale
+            for x in 0..<w {
+                let c = b.colour(at: CGPoint(x: area.minX + (CGFloat(x) + 0.5) / scale, y: py))
+                let i = (y * w + x) * 4
+                pixels[i] = UInt8(max(0, min(255, (c.red * 255).rounded())))
+                pixels[i + 1] = UInt8(max(0, min(255, (c.green * 255).rounded())))
+                pixels[i + 2] = UInt8(max(0, min(255, (c.blue * 255).rounded())))
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
+        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
     }
 }

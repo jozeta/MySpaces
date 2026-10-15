@@ -11,9 +11,28 @@ enum ScreenBandCapture {
     /// Cached filter: building SCShareableContent each frame is too slow for the 30 Hz watch.
     /// The filter only excludes the overlay windows that existed when it was built, so it must be
     /// invalidated whenever overlays are shown or hidden.
-    nonisolated(unsafe) private static var cachedFilter: (filter: SCContentFilter, width: CGFloat)?
+    nonisolated(unsafe) private static var cachedFilter: (filter: SCContentFilter, width: CGFloat, builtAt: Date)?
+    nonisolated(unsafe) private static var windowsChangedAt = Date.distantPast
+    /// The window server lists newly shown windows a little late: a filter built sooner than this
+    /// after our overlays changed may not exclude them, and its captures can show our own names.
+    static let windowListLag: TimeInterval = 0.15
 
-    static func invalidateFilter() { cachedFilter = nil }
+    /// Call whenever overlays are shown or hidden.
+    static func invalidateFilter() {
+        cachedFilter = nil
+        windowsChangedAt = Date()
+    }
+
+    /// Like `capture(heightPoints:filter: true)`, and says whether the filter is sure to exclude
+    /// every overlay window (built long enough after they last changed).
+    static func captureWatched(heightPoints: CGFloat) async throws -> (CGImage, pointsPerPixel: CGFloat, trusted: Bool) {
+        let settledAt = windowsChangedAt.addingTimeInterval(windowListLag)
+        if let cached = cachedFilter, cached.builtAt < settledAt, Date() >= settledAt {
+            cachedFilter = nil // rebuild now that the window list has caught up
+        }
+        let (image, ppp) = try await capture(heightPoints: heightPoints, filter: true)
+        return (image, ppp, (cachedFilter?.builtAt ?? .distantPast) >= settledAt)
+    }
 
     static func capture(heightPoints: CGFloat, filter reuse: Bool?) async throws -> (CGImage, pointsPerPixel: CGFloat) {
         if reuse == true, let cached = cachedFilter {
@@ -26,7 +45,7 @@ enum ScreenBandCapture {
         }
         let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
         let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
-        cachedFilter = (filter, CGFloat(display.width))
+        cachedFilter = (filter, CGFloat(display.width), Date())
         return try await shoot(filter, width: CGFloat(display.width), heightPoints: heightPoints)
     }
 

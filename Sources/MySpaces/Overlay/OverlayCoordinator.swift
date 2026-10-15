@@ -19,12 +19,12 @@ final class OverlayCoordinator {
     static let fingerprintInterval: TimeInterval = 1.0 / 30
     static let maxReferences = 12
     // Measured relative to Mission Control opening: captions start appearing ~0.19 s after the
-    // Dock window appears and land ~0.37 s, moving only a few points at the end. The remembered
-    // opening layout fades in over the last part of that, finishing as the captions land.
+    // Dock window appears; by ~0.23 s they are within ~5 pt of where they rest (~0.5 s). The
+    // remembered opening layout appears then, at the resting place, fully opaque: its patches are
+    // tall enough to cover that last slide, while a fade would let the sliding captions show through.
     // (The expanded thumbnail row slides sideways by about one slot, so it is never predicted:
     // names appear there only once it has come to rest.)
     static let anticipateOpenDelay: TimeInterval = 0.23
-    static let fadeDuration: TimeInterval = 0.12
     /// An anticipated layout must be confirmed by an exact fingerprint match within this time.
     static let anticipationGrace: TimeInterval = 0.9
     static let missLimit = 5
@@ -42,7 +42,12 @@ final class OverlayCoordinator {
     private let stabilizer = LayoutStabilizer(requiredAgreeing: 3, tolerance: 2)
     /// Search range around a remembered layout: the end of Mission Control's animations drifts a
     /// few points, and the names follow.
+    /// Kept small: on close the bar slides up, and names must not chase it. (The opening slide's
+    /// last ~5 pt are not followed at all: names wait at the resting place for the captions.)
     static let followRange = CGSize(width: 8, height: 4)
+    /// Readings (~30 Hz) at one unchanged offset before it counts as the layout's resting place.
+    static let restingReadings = 6
+    private var restingOffset = RestingOffset(requiredReadings: OverlayCoordinator.restingReadings)
     /// The collapsed bar reacts to the pointer a few points below its captions.
     static let barEntryMargin: CGFloat = 12
     private var shownOffset: (dx: Int, dy: Int) = (0, 0)
@@ -67,6 +72,14 @@ final class OverlayCoordinator {
         }
 
         var styled: [(LabelPlacement, PatchStyle)] { Array(zip(placements, styles)) }
+
+        /// The same layout, resting (dx, dy) points away from where it was recorded.
+        func offsetBy(dx: CGFloat, dy: CGFloat) -> Reference {
+            Reference(signature: signature, fingerprint: fingerprint, styled: styled.map { p, style in
+                (LabelPlacement(rect: p.rect.offsetBy(dx: dx, dy: dy), name: p.name, spaceKey: p.spaceKey, maxWidth: p.maxWidth),
+                 style.offsetBy(dx: dx, dy: dy))
+            })
+        }
         var bandHeight: CGFloat { (rects.map(\.maxY).max() ?? 0) + 4 }
         var key: String { "\(signature)@\(Int(rects.first?.midY ?? 0))" }
         /// Captions in the top strip (collapsed bar, ~59 pt) rather than under thumbnails (~179 pt).
@@ -79,9 +92,10 @@ final class OverlayCoordinator {
         /// Signature → the layout first shown when Mission Control opens.
         var opening: [String: Reference] = [:]
     }
-    /// v2: v1 could hold layouts recorded mid-animation, so it is not read.
+    /// v4: earlier files could hold layouts recorded before the bar finished sliding, flat patches, and
+    /// patches cut short by a too-tight caption box.
     private static var layoutsURL: URL {
-        NameStore.defaultURL.deletingLastPathComponent().appendingPathComponent("layouts-v2.json")
+        NameStore.defaultURL.deletingLastPathComponent().appendingPathComponent("layouts-v4.json")
     }
     private var layouts = Layouts()
     private var references: [Reference] {
@@ -98,6 +112,8 @@ final class OverlayCoordinator {
     private var fingerprintTimer: Timer?
     private var pointerTimer: Timer?
     private var fingerprintInFlight = false
+    /// Bumped on every hide, so a fingerprint capture taken before it cannot show names again.
+    private var hideCount = 0
     /// Bumped on every open/close, so results from a previous session are dropped.
     private var gateSession = 0
     private var settlingSince: Date?
@@ -215,13 +231,19 @@ final class OverlayCoordinator {
     private func fingerprintTick() {
         guard !fingerprintInFlight, detector.isOpen, Permissions.screenRecordingGranted else { return }
         let sig = signature()
-        let candidates = shownReference.map { [$0] } ?? references.filter { $0.signature == sig }
+        // While the pointer is in the collapsed bar it is expanding: its captions are still in
+        // place for a frame or two, but showing their names again would flicker over the expansion.
+        let candidates = shownReference.map { [$0] }
+            ?? references.filter { $0.signature == sig && !($0.isCollapsedBar && pointerInBar($0)) }
         guard let height = candidates.map(\.bandHeight).max() else { return }
         fingerprintInFlight = true
         let session = gateSession
+        let hides = hideCount
         let followRange = Self.followRange
         Task.detached(priority: .userInitiated) {
-            let capture = try? await ScreenBandCapture.capture(heightPoints: height, filter: true)
+            let watched = try? await ScreenBandCapture.captureWatched(heightPoints: height)
+            let capture = watched.map { ($0.0, $0.pointsPerPixel) }
+            let trusted = watched?.trusted ?? false
             let current = await MainActor.run { self.shownOffset }
             // Exact check at the current offset first (cheap); search nearby only if it fails.
             let found = candidates.map { ref -> (dx: Int, dy: Int)? in
@@ -236,20 +258,31 @@ final class OverlayCoordinator {
             await MainActor.run {
                 self.fingerprintInFlight = false
                 guard capture != nil, session == self.gateSession, self.detector.isOpen else { return }
+                // Names were hidden while this capture ran (the pointer entered the bar): it shows
+                // the layout from before, so it must not bring those names back.
+                guard hides == self.hideCount else { return }
                 if let shownRef = self.shownReference {
-                    if let offset = found.first ?? nil {
+                    let anticipating = self.anticipatedUntil.map { Date() < $0 } ?? false
+                    if let offset = found.first ?? nil, !(anticipating && offset != (0, 0)) {
                         self.follow(offset)
                         self.confirm(shownRef)
-                    } else if let until = self.anticipatedUntil, Date() < until {
-                        // Shown ahead of the captions; they are still animating into place.
+                        if self.restingOffset.observe(dx: offset.dx, dy: offset.dy) { self.rebase(shownRef, at: offset) }
+                    } else if anticipating {
+                        // Shown where the captions come to rest; they are still sliding into place.
+                        // Holding still here is what keeps the names from creeping along with them.
+                    } else if !trusted {
+                        // The capture filter may predate our newest windows (the window server lists
+                        // new windows a little late) and so see our own names: not a reason to hide.
                     } else {
                         self.layoutChanged(from: shownRef)
                     }
-                } else if let i = found.firstIndex(where: { $0 != nil }), let offset = found[i] {
+                } else if let i = found.firstIndex(where: { $0.map { $0 == (0, 0) } ?? false }) {
+                    // Only where it rests: found a few points off, the captions are still sliding
+                    // in, and names shown there would creep along with them. (A layout that really
+                    // moved is picked up by the OCR scan.)
                     let ref = candidates[i]
                     self.settlingSince = nil
                     self.render(ref)
-                    self.follow(offset)
                     self.confirm(ref)
                 }
             }
@@ -261,7 +294,7 @@ final class OverlayCoordinator {
         let session = gateSession
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, session == self.gateSession, self.detector.isOpen, self.shownReference == nil else { return }
-            self.render(ref, fadeIn: Self.fadeDuration)
+            self.render(ref)
             self.shownConfirmed = false
             self.anticipatedUntil = Date().addingTimeInterval(Self.anticipationGrace)
         }
@@ -288,11 +321,14 @@ final class OverlayCoordinator {
 
     /// The collapsed bar expands as soon as the pointer enters it. Hide the collapsed names at
     /// that moment instead of a frame or two later, when the captions have started to move.
-    /// (If it does not expand after all, the fingerprint watch shows them again right away.)
+    /// (If it does not expand after all, the fingerprint watch shows them again once the pointer leaves.)
     private func pointerTick() {
-        guard let shownRef = shownReference, shownRef.isCollapsedBar,
-              pointerY() < shownRef.bandHeight + Self.barEntryMargin else { return }
+        guard let shownRef = shownReference, shownRef.isCollapsedBar, pointerInBar(shownRef) else { return }
         layoutChanged(from: shownRef)
+    }
+
+    private func pointerInBar(_ ref: Reference) -> Bool {
+        pointerY() < ref.bandHeight + Self.barEntryMargin
     }
 
     /// Pointer distance from the top of the main screen, in points.
@@ -301,14 +337,28 @@ final class OverlayCoordinator {
         return screen.frame.maxY - NSEvent.mouseLocation.y
     }
 
+    /// The names followed their captions to a steady offset: the layout was recorded before the
+    /// bar finished sliding. Move it to where it rests, so next time the names appear right there.
+    private func rebase(_ ref: Reference, at offset: (dx: Int, dy: Int)) {
+        let moved = ref.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy))
+        references.removeAll { $0.key == ref.key }
+        remember(moved)
+        for (sig, opening) in layouts.opening where opening.key == ref.key { layouts.opening[sig] = moved }
+        renderer.rebase()
+        shownOffset = (0, 0)
+        shownReference = moved
+        shown = moved.styled.map(\.0)
+        log.notice("layout rebased by (\(offset.dx), \(offset.dy))")
+    }
+
     private func follow(_ offset: (dx: Int, dy: Int)) {
         shownOffset = offset
         renderer.move(dx: offset.dx, dy: offset.dy)
     }
 
-    private func render(_ ref: Reference, fadeIn: TimeInterval = 0) {
+    private func render(_ ref: Reference) {
         if !LayoutStabilizer.same(ref.styled.map(\.0), shown) {
-            renderer.show(ref.styled, fadeIn: fadeIn)
+            renderer.show(ref.styled)
             shownOffset = (0, 0)
             ScreenBandCapture.invalidateFilter()
             shown = ref.styled.map(\.0)
@@ -324,7 +374,9 @@ final class OverlayCoordinator {
     }
 
     private func hide() {
+        hideCount += 1
         shownConfirmed = false
+        restingOffset.reset()
         renderer.hideAll()
         ScreenBandCapture.invalidateFilter()
         shown = []

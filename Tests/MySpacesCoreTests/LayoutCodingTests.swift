@@ -5,7 +5,10 @@ import XCTest
 final class LayoutCodingTests: XCTestCase {
     func testPlacementAndStyleRoundTrip() throws {
         let p = LabelPlacement(rect: CGRect(x: 936, y: 59, width: 64, height: 20), name: "first 🧪", spaceKey: "main:X", maxWidth: 82)
-        let styles: [PatchStyle] = [.native(red: 0.2, green: 0.3, blue: 0.5), .pill]
+        let backdrop = PatchBackdrop(rect: CGRect(x: 920, y: 50, width: 90, height: 2),
+                                     left: [.init(red: 0.2, green: 0.3, blue: 0.5), .init(red: 0.1, green: 0.1, blue: 0.1)],
+                                     right: [.init(red: 0.2, green: 0.3, blue: 0.5), .init(red: 0.9, green: 0.9, blue: 0.9)])
+        let styles: [PatchStyle] = [.backdrop(backdrop), .pill]
         XCTAssertEqual(try JSONDecoder().decode(LabelPlacement.self, from: JSONEncoder().encode(p)), p)
         XCTAssertEqual(try JSONDecoder().decode([PatchStyle].self, from: JSONEncoder().encode(styles)), styles)
     }
