@@ -23,8 +23,12 @@ public struct StripTextRecognizer: Sendable {
         while top + stripHeight <= limit + 0.5 {
             let pixelRect = CGRect(x: 0, y: (top / pointsPerPixel).rounded(.down),
                                    width: CGFloat(image.width), height: (stripHeight / pointsPerPixel).rounded(.down))
-            for label in try recognizeRow(image, pixelRect: pixelRect, top: top, pointsPerPixel: pointsPerPixel) {
-                merge(label, into: &found)
+            // Finding the caption row needs no tiles (27 strips × 3 tiles took ~1.5 s); the
+            // targeted read of the row that follows does, to catch every caption.
+            if let strip = image.cropping(to: pixelRect) {
+                for label in try recognizeStrip(strip, top: top, pointsPerPixel: pointsPerPixel) {
+                    merge(label, into: &found)
+                }
             }
             top += stripStep
         }
@@ -84,20 +88,25 @@ public struct StripTextRecognizer: Sendable {
 
     private func recognizeRow(_ image: CGImage, pixelRect: CGRect, top: CGFloat, pointsPerPixel ppp: CGFloat) throws -> [RecognizedLabel] {
         let width = pixelRect.width
-        var labels: [RecognizedLabel] = []
-        for (from, to) in Self.tiles(width: width, pointsPerPixel: ppp) {
+        let tiles = Self.tiles(width: width, pointsPerPixel: ppp)
+        // Tiles are read in parallel: one after another they tripled the time of a scan.
+        let results = TileResults(count: tiles.count)
+        DispatchQueue.concurrentPerform(iterations: tiles.count) { i in
+            let (from, to) = tiles[i]
             let rect = CGRect(x: pixelRect.minX + from, y: pixelRect.minY, width: to - from, height: pixelRect.height)
-            guard let strip = image.cropping(to: rect) else { continue }
+            guard let strip = image.cropping(to: rect) else { return }
             let left = rect.minX * ppp, right = rect.maxX * ppp
             let innerLeft = from > 0, innerRight = to < width
-            labels += try recognizeStrip(strip, top: top, pointsPerPixel: ppp).compactMap { label in
-                let moved = RecognizedLabel(text: label.text, rect: label.rect.offsetBy(dx: left, dy: 0))
-                if innerLeft && moved.rect.minX < left + Self.cutMargin { return nil }
-                if innerRight && moved.rect.maxX > right - Self.cutMargin { return nil }
-                return moved
-            }
+            results.set(i, Result {
+                try recognizeStrip(strip, top: top, pointsPerPixel: ppp).compactMap { label in
+                    let moved = RecognizedLabel(text: label.text, rect: label.rect.offsetBy(dx: left, dy: 0))
+                    if innerLeft && moved.rect.minX < left + Self.cutMargin { return nil }
+                    if innerRight && moved.rect.maxX > right - Self.cutMargin { return nil }
+                    return moved
+                }
+            })
         }
-        return labels
+        return try results.all().flatMap { try $0.get() }
     }
 
     private func recognizeStrip(_ strip: CGImage, top: CGFloat, pointsPerPixel: CGFloat) throws -> [RecognizedLabel] {
@@ -154,5 +163,21 @@ public struct StripTextRecognizer: Sendable {
 
     private static func rank(_ label: RecognizedLabel) -> (Int, CGFloat) {
         (label.text.wholeMatch(of: captionPattern) != nil ? 1 : 0, label.rect.height)
+    }
+}
+
+/// Collects per-tile results written from `concurrentPerform`.
+private final class TileResults: @unchecked Sendable {
+    private let lock = NSLock()
+    private var results: [Result<[RecognizedLabel], Error>?]
+
+    init(count: Int) { results = Array(repeating: nil, count: count) }
+
+    func set(_ i: Int, _ result: Result<[RecognizedLabel], Error>) {
+        lock.withLock { results[i] = result }
+    }
+
+    func all() -> [Result<[RecognizedLabel], Error>] {
+        lock.withLock { results.compactMap { $0 } }
     }
 }

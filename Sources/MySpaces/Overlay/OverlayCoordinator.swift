@@ -319,10 +319,11 @@ final class OverlayCoordinator {
                 guard let (image, ppp) = capture else { return nil }
                 let offset: (dx: Int, dy: Int) = index < shownList.count ? current : (0, 0)
                 let here = inStrip(ref.rects).map { $0.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy)) }
-                // Names already shown keep following through slightly-off mid-slide frames;
-                // new layouts must match exactly before their names appear.
+                // Close enough counts: names already shown keep following through slightly-off
+                // mid-slide frames, and a layout seen at one spot two frames in a row appears while
+                // the row finishes its last sub-point creep (~0.2 s sooner than an exact match).
                 let shown = index < shownList.count
-                let threshold = shown ? CaptionFingerprint.followThreshold : CaptionFingerprint.matchThreshold
+                let threshold = CaptionFingerprint.followThreshold
                 if let now = CaptionFingerprint(image: image, rects: here, pointsPerPixel: ppp) {
                     let differences = ref.fingerprint.captionDifferences(to: now)
                     if shown { shownDifferences = differences }
@@ -333,6 +334,7 @@ final class OverlayCoordinator {
                       best.difference < threshold else { return nil }
                 return (best.dx, best.dy)
             }
+            let captionDifferences = shownDifferences
             await MainActor.run {
                 self.fingerprintInFlight = false
                 guard capture != nil, session == self.gateSession, self.detector.isOpen else { return }
@@ -362,9 +364,9 @@ final class OverlayCoordinator {
                     // the next frame, ~17 ms later, decides.
                     self.mismatchSeen = true
                 } else {
-                    let moved = Set((shownDifferences ?? []).indices.filter { shownDifferences![$0] >= CaptionFingerprint.followThreshold })
+                    let moved = Set((captionDifferences ?? []).indices.filter { captionDifferences![$0] >= CaptionFingerprint.followThreshold })
                     let kept = shownRef.placements.count - moved.count
-                    if shownDifferences == nil || kept <= 0 {
+                    if captionDifferences == nil || kept <= 0 {
                         self.layoutChanged(from: shownRef)
                     } else {
                         // Some captions moved (a desktop added or removed next to them), the rest
@@ -558,9 +560,18 @@ final class OverlayCoordinator {
         let band = Self.bandHeight
         let sig = signature()
         let started = Date()
+        let streamed = rows.flatMap { rows -> BandStream.Frame? in
+            guard bandStream.isRunning, let lowest = rows.max(),
+                  lowest + recognizer.stripHeight / 2 < BandStream.heightPoints,
+                  let frame = bandStream.frame(top: 0, height: BandStream.heightPoints), frame.trusted else { return nil }
+            return frame
+        }
         Task.detached(priority: .userInitiated) {
             do {
-                let (image, ppp) = try await ScreenBandCapture.capture(heightPoints: band)
+                // The live stream's newest frame when it covers the rows and excludes our own names;
+                // a screenshot takes 30-120 ms while Mission Control animates.
+                let (image, ppp) = if let streamed { (streamed.image, streamed.pointsPerPixel) }
+                    else { try await ScreenBandCapture.capture(heightPoints: band) }
                 let labels = try rows.map { try recognizer.recognize(in: image, pointsPerPixel: ppp, rowMidYs: $0) }
                     ?? recognizer.recognize(in: image, pointsPerPixel: ppp)
                 let placements = LabelMapper.placements(labels: labels, displaySpaces: displaySpaces, names: names)
