@@ -16,3 +16,6 @@ xcuserdata/
 # Local tooling state
 .superpowers/
 .remember/
+
+# Internal planning notes
+docs/superpowers/
