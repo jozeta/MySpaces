@@ -38,6 +38,13 @@ public final class OverlayScanGate {
         isOpen = false
     }
 
+    /// The desktops themselves changed (added or removed in Mission Control): a mismatch read
+    /// against the old list says nothing about the new one, so scanning may resume.
+    public func desktopsChanged() {
+        disabled = false
+        lastDecided = issued // scans issued against the old list are ignored
+    }
+
     /// A ticket for a new scan, or nil when scanning is pointless (closed or disabled).
     public func issueScan() -> ScanTicket? {
         guard isOpen, !disabled else { return nil }

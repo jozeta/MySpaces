@@ -58,6 +58,8 @@ final class OverlayCoordinator {
     private var lastFrameAt: Date?
     /// The shown layout's captions were missing from the last trusted frame.
     private var mismatchSeen = false
+    /// Indexes of shown names hidden because their captions moved (a desktop added or removed).
+    private var hiddenCaptions: Set<Int> = []
     /// Room above and below the caption row in the watch's strip: the follow search and a little more.
     static let stripMargin: CGFloat = 10
     private var arriving = RestingOffset(requiredReadings: OverlayCoordinator.arrivalReadings, countsZero: true)
@@ -231,9 +233,31 @@ final class OverlayCoordinator {
     }
 
     private func watch() {
+        // Desktops can be added or removed in Mission Control itself. Captions read against the old
+        // list of desktops cannot be matched, so re-read it (cheap) and relearn when it changes.
+        let before = signature()
+        model.controller.refresh()
+        if signature() != before { spacesChanged() }
         if settlingSince == nil, !scanInFlight, Date().timeIntervalSince(lastScanStart) > Self.rescanInterval {
             scan()
         }
+    }
+
+    private func spacesChanged() {
+        model.refresh()
+        gate.desktopsChanged()
+        consecutiveMisses = 0
+        pendingLayout = nil
+        arrivingKey = nil
+        candidateRow = nil
+        // A scan in flight read its captions against the old list: let it finish unheard.
+        scanInFlight = false
+        stabilizer.reset()
+        if shownReference == nil {
+            beginSettling()
+        }
+        // Names still shown stay while their captions are in place; the fingerprint watch hides
+        // them when the row moves, and the new layout is learned against the new list.
     }
 
     /// Identifies a layout: which desktop is current (its caption sits on a highlight and the bar
@@ -259,9 +283,13 @@ final class OverlayCoordinator {
         let sig = signature()
         // While the pointer is in the collapsed bar it is expanding: its captions are still in
         // place for a frame or two, but showing their names again would flicker over the expansion.
-        let candidates = shownReference.map { [$0] }
-            ?? (references + (pendingLayout.map { [$0] } ?? []))
-                .filter { $0.signature == sig && !($0.isCollapsedBar && pointerInBar($0)) }
+        // Shown names are checked against their own layout. With none shown, or only some (the
+        // rest hid when a desktop was added or removed), new layouts are looked for as well.
+        let shownList = shownReference.map { [$0] } ?? []
+        let lookForNew = shownReference == nil || !hiddenCaptions.isEmpty
+        let newcomers = !lookForNew ? [] : (references + (pendingLayout.map { [$0] } ?? []))
+            .filter { $0.signature == sig && $0.key != shownReference?.key && !($0.isCollapsedBar && pointerInBar($0)) }
+        let candidates = shownList + newcomers
         guard let stripBottom = candidates.map(\.bandHeight).max(),
               let stripTop = candidates.flatMap(\.rects).map(\.minY).min().map({ max(0, ($0 - Self.stripMargin).rounded(.down)) }) else { return }
         let stripHeight = stripBottom + Self.stripMargin - stripTop
@@ -286,11 +314,15 @@ final class OverlayCoordinator {
             let trusted = watched?.trusted ?? false
             let current = await MainActor.run { self.shownOffset }
             // Exact check at the current offset first (cheap); search nearby only if it fails.
-            let found = candidates.map { ref -> (dx: Int, dy: Int)? in
+            var shownDifferences: [Double]?
+            let found = candidates.enumerated().map { index, ref -> (dx: Int, dy: Int)? in
                 guard let (image, ppp) = capture else { return nil }
-                let here = inStrip(ref.rects).map { $0.offsetBy(dx: CGFloat(current.dx), dy: CGFloat(current.dy)) }
-                if let now = CaptionFingerprint(image: image, rects: here, pointsPerPixel: ppp), ref.fingerprint.matches(now) {
-                    return current
+                let offset: (dx: Int, dy: Int) = index < shownList.count ? current : (0, 0)
+                let here = inStrip(ref.rects).map { $0.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy)) }
+                if let now = CaptionFingerprint(image: image, rects: here, pointsPerPixel: ppp) {
+                    let differences = ref.fingerprint.captionDifferences(to: now)
+                    if index < shownList.count { shownDifferences = differences }
+                    if (differences.max() ?? 1) < CaptionFingerprint.matchThreshold { return offset }
                 }
                 return CaptionFingerprint.locate(ref.fingerprint, expectedAt: inStrip(ref.rects), in: image,
                                                  pointsPerPixel: ppp, maxShift: followRange)
@@ -301,48 +333,79 @@ final class OverlayCoordinator {
                 // Names were hidden while this capture ran (the pointer entered the bar): it shows
                 // the layout from before, so it must not bring those names back.
                 guard hides == self.hideCount else { return }
-                if let shownRef = self.shownReference {
-                    let anticipating = self.anticipatedUntil.map { Date() < $0 } ?? false
-                    if let offset = found.first ?? nil, !(anticipating && offset != (0, 0)) {
-                        self.mismatchSeen = false
-                        self.follow(offset)
-                        self.confirm(shownRef)
-                        if self.restingOffset.observe(dx: offset.dx, dy: offset.dy) { self.rebase(shownRef, at: offset) }
-                    } else if anticipating {
-                        // Shown where the captions come to rest; they are still sliding into place.
-                        // Holding still here is what keeps the names from creeping along with them.
-                    } else if !trusted {
-                        // The capture filter may predate our newest windows (the window server lists
-                        // new windows a little late) and so see our own names: not a reason to hide.
-                    } else if !self.mismatchSeen {
-                        // One odd frame is not enough to hide (a filter change landing mid-frame);
-                        // the next frame, ~17 ms later, decides.
-                        self.mismatchSeen = true
-                    } else {
-                        self.layoutChanged(from: shownRef)
-                    }
-                } else if let i = found.firstIndex(where: { $0.map { $0 == (0, 0) } ?? false }) ?? found.firstIndex(where: { $0 != nil }),
-                          let offset = found[i] {
-                    // Shown once it is still: found at one spot for a few frames in a row. Mid-slide
-                    // the spot changes every frame. Where it rests may be a few points from where it
-                    // was learned (the thumbnail row creeps for a second): it is moved there.
-                    let ref = candidates[i]
-                    if self.arrivingKey != ref.key {
-                        self.arrivingKey = ref.key
-                        self.arriving.reset()
-                    }
-                    guard self.arriving.observe(dx: offset.dx, dy: offset.dy) else { return }
-                    let resting = offset == (0, 0) ? ref : ref.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy))
-                    self.settlingSince = nil
-                    self.pendingLayout = nil
-                    self.remember(resting)
-                    self.render(resting)
-                    self.confirm(resting)
+                // A new layout at rest replaces whatever is shown.
+                if let i = self.arrived(candidates: candidates, found: found, from: shownList.count) {
+                    self.arrive(candidates[i], at: found[i]!)
+                    return
+                }
+                guard let shownRef = self.shownReference else { return }
+                let anticipating = self.anticipatedUntil.map { Date() < $0 } ?? false
+                if let offset = found.first ?? nil, !(anticipating && offset != (0, 0)) {
+                    self.mismatchSeen = false
+                    self.follow(offset)
+                    self.confirm(shownRef)
+                    if self.restingOffset.observe(dx: offset.dx, dy: offset.dy) { self.rebase(shownRef, at: offset) }
+                } else if anticipating {
+                    // Shown where the captions come to rest; they are still sliding into place.
+                    // Holding still here is what keeps the names from creeping along with them.
+                } else if !trusted {
+                    // The capture filter may predate our newest windows (the window server lists
+                    // new windows a little late) and so see our own names: not a reason to hide.
+                } else if !self.mismatchSeen {
+                    // One odd frame is not enough to hide (a filter change landing mid-frame);
+                    // the next frame, ~17 ms later, decides.
+                    self.mismatchSeen = true
                 } else {
-                    self.arrivingKey = nil
+                    let moved = Set((shownDifferences ?? []).indices.filter { shownDifferences![$0] >= CaptionFingerprint.matchThreshold })
+                    let kept = shownRef.placements.count - moved.count
+                    if shownDifferences == nil || kept <= 0 {
+                        self.layoutChanged(from: shownRef)
+                    } else {
+                        // Some captions moved (a desktop added or removed next to them), the rest
+                        // are where they were: keep those names while the new layout is learned.
+                        self.hideCaptions(moved, of: shownRef)
+                    }
                 }
             }
         }
+    }
+
+    /// Index (at or after `start`) of a layout found at one spot for a few frames in a row.
+    /// Mid-slide the spot changes every frame. Where it rests may be a few points from where it
+    /// was learned (the thumbnail row creeps for a second): `arrive` moves it there.
+    private func arrived(candidates: [Reference], found: [(dx: Int, dy: Int)?], from start: Int) -> Int? {
+        guard start < candidates.count,
+              let i = (start..<candidates.count).first(where: { found[$0].map { $0 == (0, 0) } ?? false })
+                ?? (start..<candidates.count).first(where: { found[$0] != nil }),
+              let offset = found[i] else {
+            arrivingKey = nil
+            return nil
+        }
+        let ref = candidates[i]
+        if arrivingKey != ref.key {
+            arrivingKey = ref.key
+            arriving.reset()
+        }
+        return arriving.observe(dx: offset.dx, dy: offset.dy) ? i : nil
+    }
+
+    private func arrive(_ ref: Reference, at offset: (dx: Int, dy: Int)) {
+        let resting = offset == (0, 0) ? ref : ref.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy))
+        settlingSince = nil
+        pendingLayout = nil
+        remember(resting)
+        render(resting)
+        confirm(resting)
+    }
+
+    /// Hides the names over captions that moved, keeps the others, and learns the new layout.
+    private func hideCaptions(_ moved: Set<Int>, of ref: Reference) {
+        let newlyHidden = moved.subtracting(hiddenCaptions)
+        guard !newlyHidden.isEmpty else { return }
+        hiddenCaptions.formUnion(newlyHidden)
+        renderer.hide(newlyHidden)
+        overlaysChanged()
+        if settlingSince == nil { beginSettling() }
     }
 
     /// Show a remembered layout ahead of its captions, timed to their animation.
@@ -413,8 +476,11 @@ final class OverlayCoordinator {
     }
 
     private func render(_ ref: Reference) {
-        if !LayoutStabilizer.same(ref.styled.map(\.0), shown) {
+        // Redrawn when it differs, or when some names were hidden (their captions moved and came
+        // back to the same place, as when a desktop is added after them).
+        if !LayoutStabilizer.same(ref.styled.map(\.0), shown) || !hiddenCaptions.isEmpty {
             renderer.show(ref.styled)
+            hiddenCaptions = []
             shownOffset = (0, 0)
             overlaysChanged()
             shown = ref.styled.map(\.0)
@@ -440,6 +506,7 @@ final class OverlayCoordinator {
 
     private func hide() {
         hideCount += 1
+        hiddenCaptions = []
         mismatchSeen = false
         arrivingKey = nil
         shownConfirmed = false
@@ -519,6 +586,8 @@ final class OverlayCoordinator {
     private func finish(_ ticket: ScanTicket, labels: [RecognizedLabel], styled: [(LabelPlacement, PatchStyle)]?,
                         settling: Bool, fullScan: Bool, elapsed: TimeInterval,
                         fingerprint: CaptionFingerprint?, signature sig: String, started: Date) {
+        // Read against an older list of desktops (one was added or removed meanwhile): stale.
+        guard sig == signature() else { return }
         scanInFlight = false
         // The fingerprint watch drew a newer layout while this scan was running: it is stale.
         if shownReference != nil, started < shownAt { return }

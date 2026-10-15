@@ -8,6 +8,11 @@ final class OverlayRenderer {
     private var origins: [NSPoint] = []
     private var offset = CGVector.zero
 
+    /// Hides some names (by index), keeping the others where they are.
+    func hide(_ indices: Set<Int>) {
+        for i in indices where windows.indices.contains(i) { windows[i].orderOut(nil) }
+    }
+
     func hideAll() {
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()

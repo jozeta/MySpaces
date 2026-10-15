@@ -38,15 +38,22 @@ public struct CaptionFingerprint: Equatable, Sendable, Codable {
     /// Each caption is compared after removing its own mean brightness, so a slightly brighter or
     /// darker bar (blurred wallpaper behind it changed) does not count as a different caption.
     public func difference(to other: CaptionFingerprint) -> Double {
-        guard count == other.count, samples.count == other.samples.count, !samples.isEmpty else { return 1 }
+        captionDifferences(to: other).max() ?? 1
+    }
+
+    /// Worst slice difference per caption, in order (all 1 when the caption count differs).
+    public func captionDifferences(to other: CaptionFingerprint) -> [Double] {
+        guard count == other.count, samples.count == other.samples.count, !samples.isEmpty else {
+            return Array(repeating: 1, count: max(count, 1))
+        }
         let w = Self.sampleWidth, h = Self.sampleHeight, per = w * h
         let sliceWidth = w / Self.slices
-        var worst = 0.0
-        for c in 0..<count {
+        return (0..<count).map { c in
             let base = c * per
             var sumA = 0, sumB = 0
             for i in base..<(base + per) { sumA += Int(samples[i]); sumB += Int(other.samples[i]) }
             let offset = Double(sumA - sumB) / Double(per)
+            var worst = 0.0
             for slice in 0..<Self.slices {
                 var total = 0.0
                 for y in 0..<h {
@@ -57,8 +64,8 @@ public struct CaptionFingerprint: Equatable, Sendable, Codable {
                 }
                 worst = max(worst, total / Double(sliceWidth * h) / 255)
             }
+            return worst
         }
-        return worst
     }
 
     /// Searches whole-point shifts around `expectedAt` for the remembered captions. Mission

@@ -67,6 +67,19 @@ final class CaptionFingerprintTests: XCTestCase {
         XCTAssertFalse(a.matches(b), "a mean over all captions would dilute one wrong caption")
     }
 
+    func testCaptionDifferencesTellWhichCaptionChanged() throws {
+        // Adding a desktop moves only the last caption: the others' names can stay.
+        let img = try fixture("mc-collapsed")
+        let rects = [CGRect(x: 934, y: 60, width: 70, height: 19), CGRect(x: 1111, y: 60, width: 64, height: 20)]
+        let a = try XCTUnwrap(CaptionFingerprint(image: img, rects: rects, pointsPerPixel: 1))
+        let b = try XCTUnwrap(CaptionFingerprint(image: img, rects: [rects[0], CGRect(x: 1201, y: 60, width: 64, height: 20)], pointsPerPixel: 1))
+        let d = a.captionDifferences(to: b)
+        XCTAssertEqual(d.count, 2)
+        XCTAssertLessThan(d[0], CaptionFingerprint.matchThreshold)
+        XCTAssertGreaterThan(d[1], CaptionFingerprint.matchThreshold)
+        XCTAssertEqual(a.difference(to: b), d.max()!, accuracy: 0.0001)
+    }
+
     func testLocateFindsCaptionsThatDriftedAFewPoints() throws {
         let img = try fixture("mc-collapsed")
         let reference = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects, pointsPerPixel: 1))

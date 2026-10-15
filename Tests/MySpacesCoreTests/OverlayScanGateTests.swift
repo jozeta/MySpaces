@@ -55,4 +55,17 @@ final class OverlayScanGateTests: XCTestCase {
         let t2 = try XCTUnwrap(gate.issueScan(), "captions not drawn yet must not disable the session")
         XCTAssertEqual(gate.decide(t2, placements: p, settling: true), .show(p))
     }
+
+    func testChangedDesktopsReenableAfterMismatch() throws {
+        // A desktop added or removed in Mission Control: captions read against the old list
+        // mismatched, but the new list deserves a fresh start in the same session.
+        let gate = OverlayScanGate()
+        gate.open()
+        let t1 = try XCTUnwrap(gate.issueScan())
+        XCTAssertEqual(gate.decide(t1, placements: nil), .hide)
+        XCTAssertNil(gate.issueScan())
+        gate.desktopsChanged()
+        let t2 = try XCTUnwrap(gate.issueScan())
+        XCTAssertEqual(gate.decide(t2, placements: p), .show(p))
+    }
 }
