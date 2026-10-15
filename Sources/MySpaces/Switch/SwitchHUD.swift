@@ -79,6 +79,18 @@ final class SwitchHUD {
         label.layer?.mask = mask
     }
 
+    private static func roundedMask(radius: CGFloat) -> NSImage {
+        let side = radius * 2 + 1
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
+    }
+
     private func makePanel() -> NSPanel {
         let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         // Above full-screen apps and on whichever desktop is now showing.
@@ -93,10 +105,9 @@ final class SwitchHUD {
         blur.material = .hudWindow
         blur.blendingMode = .behindWindow
         blur.state = .active
-        blur.wantsLayer = true
-        blur.layer?.cornerRadius = Self.cornerRadius
-        blur.layer?.cornerCurve = .continuous
-        blur.layer?.masksToBounds = true
+        // A behind-window blur ignores the layer's corner radius; a stretchable mask image rounds
+        // it (and the window shadow follows the mask).
+        blur.maskImage = Self.roundedMask(radius: Self.cornerRadius)
         blur.autoresizingMask = [.width, .height]
         panel.contentView = blur
 

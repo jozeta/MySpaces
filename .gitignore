@@ -1,8 +1,18 @@
-.superpowers/
-.remember/
-.DS_Store
+# Build output
+.build/
 build/
 DerivedData/
+
+# Xcode and editors
 *.xcuserstate
 xcuserdata/
-.build/
+.swiftpm/
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Local tooling state
+.superpowers/
+.remember/

@@ -19,10 +19,17 @@ Run before every release and after every macOS update. Record macOS version and 
 - [ ] Direct switching works with "Switch to Desktop N" enabled
 - [ ] Revoke Accessibility: clicking a row explains and offers the setting; grant restores switching
 
+## Switch name panel
+- [ ] Switching desktops (menu, shortcut, swipe, Mission Control) shows the new name, centred, for about a second
+- [ ] A long name fades out at the panel's edge
+- [ ] Settings › Switching off: no panel; Preview shows it
+
 ## Mission Control overlay
 - [ ] Opens via F3, trackpad gesture and hot corner
 - [ ] Collapsed bar and hover-expanded bar both show names
 - [ ] Closing Mission Control leaves no overlay behind
+- [ ] Adding and removing a desktop in Mission Control keeps or restores the names
+- [ ] Six or more desktops: every name shows under the thumbnails
 - [ ] Busy wallpaper: pill fallback, no mismatched blocks
 - [ ] Revoke Screen Recording: overlay off, popover note shown
 - [ ] A name like "Desktop 5" does not confuse rescans
@@ -37,5 +44,5 @@ Run before every release and after every macOS update. Record macOS version and 
 - Multiple displays with separate Spaces: overlay off on secondary displays
 - Non-English macOS: untested
 - "Desktop N" is visible for ~0.5 s when Mission Control opens
-- Collapsed Spaces bar: names longer than ~9 characters are truncated with "…" (full names show once the bar expands)
+- Collapsed Spaces bar: names longer than their slot fade out at the end (full names show once the bar expands)
 - With a crowded menu bar, macOS may place the MySpaces icon in the menu-bar overflow
