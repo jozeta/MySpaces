@@ -8,6 +8,10 @@ import Foundation
 public struct CaptionFingerprint: Equatable, Sendable, Codable {
     /// Worst slice difference (0...1) below which two snapshots show the same captions.
     public static let matchThreshold: Double = 0.04
+    /// Looser threshold for captions whose names are already shown: mid-slide frames put captions
+    /// at fractional positions (measured ~0.06 off), while captions that are gone (Mission Control
+    /// closing, the bar collapsing or expanding) measure 0.16 and up.
+    public static let followThreshold: Double = 0.10
     /// High enough to tell "Desktop 3" from "Desktop 4" (one digit differs).
     static let sampleWidth = 96, sampleHeight = 24
     /// Slices per caption: a single differing digit dominates its slice instead of being averaged
@@ -74,6 +78,15 @@ public struct CaptionFingerprint: Equatable, Sendable, Codable {
     /// Returns the best shift (in points) when it matches, nil when the captions are not nearby.
     public static func locate(_ reference: CaptionFingerprint, expectedAt rects: [CGRect], in image: CGImage,
                               pointsPerPixel ppp: CGFloat, maxShift: CGSize) -> (dx: Int, dy: Int)? {
+        guard let best = bestShift(reference, expectedAt: rects, in: image, pointsPerPixel: ppp, maxShift: maxShift),
+              best.difference < matchThreshold else { return nil }
+        return (best.dx, best.dy)
+    }
+
+    /// The whole-point shift around `expectedAt` where the captions look most like `reference`,
+    /// with how different they still look there (0...1).
+    public static func bestShift(_ reference: CaptionFingerprint, expectedAt rects: [CGRect], in image: CGImage,
+                                 pointsPerPixel ppp: CGFloat, maxShift: CGSize) -> (dx: Int, dy: Int, difference: Double)? {
         guard let grey = GreyImage(image) else { return nil }
         var best: (dx: Int, dy: Int, difference: Double)?
         let mx = Int(maxShift.width), my = Int(maxShift.height)
@@ -85,8 +98,7 @@ public struct CaptionFingerprint: Equatable, Sendable, Codable {
                 if d < (best?.difference ?? .infinity) { best = (dx, dy, d) }
             }
         }
-        guard let best, best.difference < matchThreshold else { return nil }
-        return (best.dx, best.dy)
+        return best
     }
 
     public func matches(_ other: CaptionFingerprint) -> Bool {

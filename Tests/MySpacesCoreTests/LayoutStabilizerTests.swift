@@ -40,4 +40,11 @@ final class LayoutStabilizerTests: XCTestCase {
         XCTAssertTrue(s.observe([placement(y: 69.2)]))
         XCTAssertFalse(s.observe([placement(y: 70.6)]), "moved more than 1 pt: start over")
     }
+
+    func testRescanToleratesTextRecognitionJitter() {
+        // Vision's caption boxes move a few points between reads of the same, still screen.
+        XCTAssertTrue(LayoutStabilizer.same([placement(y: 190)], [placement(y: 193)], tolerance: LayoutStabilizer.rescanTolerance))
+        // A desktop added or removed moves captions by a whole slot.
+        XCTAssertFalse(LayoutStabilizer.same([placement(y: 190)], [placement(y: 190 + 80)], tolerance: LayoutStabilizer.rescanTolerance))
+    }
 }

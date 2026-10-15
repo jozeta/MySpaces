@@ -7,6 +7,11 @@ import Foundation
 /// three readings within 1 pt.
 public final class LayoutStabilizer {
     public static let defaultTolerance: CGFloat = 2
+    /// For checking a layout already shown against a later text-recognition read: Vision's boxes
+    /// jitter a few points between reads of a still screen, while a real change (a desktop added or
+    /// removed, the bar expanding) moves captions by a whole slot. Small real moves are followed by
+    /// the pixel fingerprint, not by rescans.
+    public static let rescanTolerance: CGFloat = 8
     private let requiredAgreeing: Int
     private let tolerance: CGFloat
     private var previous: [LabelPlacement]?

@@ -80,6 +80,17 @@ final class CaptionFingerprintTests: XCTestCase {
         XCTAssertEqual(a.difference(to: b), d.max()!, accuracy: 0.0001)
     }
 
+    func testHalfPointShiftIsStillFollowedButGoneCaptionsAreNot() throws {
+        // Mid-slide frames put captions at fractional positions: slightly off, still there.
+        let img = try fixture("mc-collapsed")
+        let reference = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects, pointsPerPixel: 1))
+        let half = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects.map { $0.offsetBy(dx: 0.5, dy: 0.5) }, pointsPerPixel: 1))
+        XCTAssertLessThan(reference.difference(to: half), CaptionFingerprint.followThreshold)
+        // Bar expanded: the captions are gone from there.
+        let gone = try XCTUnwrap(CaptionFingerprint(image: fixture("mc-expanded-fullscreen"), rects: collapsedRects, pointsPerPixel: 1))
+        XCTAssertGreaterThan(reference.difference(to: gone), CaptionFingerprint.followThreshold)
+    }
+
     func testLocateFindsCaptionsThatDriftedAFewPoints() throws {
         let img = try fixture("mc-collapsed")
         let reference = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects, pointsPerPixel: 1))

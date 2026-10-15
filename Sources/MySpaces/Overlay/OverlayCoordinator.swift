@@ -319,13 +319,19 @@ final class OverlayCoordinator {
                 guard let (image, ppp) = capture else { return nil }
                 let offset: (dx: Int, dy: Int) = index < shownList.count ? current : (0, 0)
                 let here = inStrip(ref.rects).map { $0.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy)) }
+                // Names already shown keep following through slightly-off mid-slide frames;
+                // new layouts must match exactly before their names appear.
+                let shown = index < shownList.count
+                let threshold = shown ? CaptionFingerprint.followThreshold : CaptionFingerprint.matchThreshold
                 if let now = CaptionFingerprint(image: image, rects: here, pointsPerPixel: ppp) {
                     let differences = ref.fingerprint.captionDifferences(to: now)
-                    if index < shownList.count { shownDifferences = differences }
-                    if (differences.max() ?? 1) < CaptionFingerprint.matchThreshold { return offset }
+                    if shown { shownDifferences = differences }
+                    if (differences.max() ?? 1) < threshold { return offset }
                 }
-                return CaptionFingerprint.locate(ref.fingerprint, expectedAt: inStrip(ref.rects), in: image,
-                                                 pointsPerPixel: ppp, maxShift: followRange)
+                guard let best = CaptionFingerprint.bestShift(ref.fingerprint, expectedAt: inStrip(ref.rects), in: image,
+                                                              pointsPerPixel: ppp, maxShift: followRange),
+                      best.difference < threshold else { return nil }
+                return (best.dx, best.dy)
             }
             await MainActor.run {
                 self.fingerprintInFlight = false
@@ -356,7 +362,7 @@ final class OverlayCoordinator {
                     // the next frame, ~17 ms later, decides.
                     self.mismatchSeen = true
                 } else {
-                    let moved = Set((shownDifferences ?? []).indices.filter { shownDifferences![$0] >= CaptionFingerprint.matchThreshold })
+                    let moved = Set((shownDifferences ?? []).indices.filter { shownDifferences![$0] >= CaptionFingerprint.followThreshold })
                     let kept = shownRef.placements.count - moved.count
                     if shownDifferences == nil || kept <= 0 {
                         self.layoutChanged(from: shownRef)
@@ -630,7 +636,7 @@ final class OverlayCoordinator {
                     return
                 }
                 settlingSince = nil
-            } else if !LayoutStabilizer.same(placements, shownNow) {
+            } else if !LayoutStabilizer.same(placements, shownNow, tolerance: LayoutStabilizer.rescanTolerance) {
                 // Layout changed since it was drawn: hide and wait for it to settle.
                 hide()
                 beginSettling()
