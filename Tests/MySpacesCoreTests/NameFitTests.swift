@@ -26,4 +26,11 @@ final class NameFitTests: XCTestCase {
         // Text area is 90 - 8 = 82 wide; the fade covers its last `fadeLength` points.
         XCTAssertEqual(fit.fadeStart, (82 - NameFit.fadeLength) / 82, accuracy: 0.001)
     }
+
+    func testFadeLengthCanScaleWithTheText() {
+        // Large text (the switch panel) needs a longer fade, or it reads as a hard cut.
+        let fit = NameFit(textWidth: 2000, minimumWidth: 400, maximumWidth: 1000, padding: 100, fadeLength: 72)
+        XCTAssertEqual(fit.fadeLength, 72)
+        XCTAssertEqual(fit.fadeStart, (900 - 72) / 900, accuracy: 0.001)
+    }
 }

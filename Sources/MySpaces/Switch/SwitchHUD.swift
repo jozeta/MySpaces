@@ -33,7 +33,8 @@ final class SwitchHUD {
         label.stringValue = name
         label.sizeToFit()
         let fit = NameFit(textWidth: label.frame.width, minimumWidth: Self.minimumWidth,
-                          maximumWidth: screen.frame.width * Self.maximumWidthShare, padding: Self.padding.width)
+                          maximumWidth: screen.frame.width * Self.maximumWidthShare, padding: Self.padding.width,
+                          fadeLength: Self.fontSize * 1.5)
         let size = NSSize(width: fit.width, height: label.frame.height + Self.padding.height)
         panel.setFrame(NSRect(x: screen.frame.midX - size.width / 2, y: screen.frame.midY - size.height / 2,
                               width: size.width, height: size.height), display: false)
