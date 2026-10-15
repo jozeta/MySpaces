@@ -17,9 +17,9 @@ final class SwitchHUD {
     /// Share of the screen width a long name may take before it fades out.
     static let maximumWidthShare: CGFloat = 0.8
     static let cornerRadius: CGFloat = 32
-    static let fadeIn: TimeInterval = 0.12
+    static let fadeIn: TimeInterval = 0.06
     static let hold: TimeInterval = 0.9
-    static let fadeOut: TimeInterval = 0.35
+    static let fadeOut: TimeInterval = 0.1
 
     private var panel: NSPanel?
     private let label = NSTextField(labelWithString: "")

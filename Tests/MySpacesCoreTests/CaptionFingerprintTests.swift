@@ -91,6 +91,15 @@ final class CaptionFingerprintTests: XCTestCase {
         XCTAssertGreaterThan(reference.difference(to: gone), CaptionFingerprint.followThreshold)
     }
 
+    func testContentTellsCaptionsFromEmptyBar() throws {
+        let img = try fixture("mc-collapsed")
+        let captions = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects, pointsPerPixel: 1))
+        XCTAssertTrue(captions.hasContent, "every rect holds caption text")
+        // The same rects moved into the empty bar to the left of the captions.
+        let empty = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects.map { $0.offsetBy(dx: -500, dy: 0) }, pointsPerPixel: 1))
+        XCTAssertFalse(empty.hasContent)
+    }
+
     func testLocateFindsCaptionsThatDriftedAFewPoints() throws {
         let img = try fixture("mc-collapsed")
         let reference = try XCTUnwrap(CaptionFingerprint(image: img, rects: collapsedRects, pointsPerPixel: 1))

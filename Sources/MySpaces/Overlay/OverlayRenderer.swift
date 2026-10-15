@@ -8,13 +8,17 @@ final class OverlayRenderer {
     private var origins: [NSPoint] = []
     private var offset = CGVector.zero
 
+    /// Names fade in and out this quickly: softer than a cut, short enough to keep up with
+    /// Mission Control's own captions.
+    static let fade: TimeInterval = 0.08
+
     /// Hides some names (by index), keeping the others where they are.
     func hide(_ indices: Set<Int>) {
-        for i in indices where windows.indices.contains(i) { windows[i].orderOut(nil) }
+        fadeOut(indices.filter(windows.indices.contains).map { windows[$0] })
     }
 
     func hideAll() {
-        windows.forEach { $0.orderOut(nil) }
+        fadeOut(windows)
         windows.removeAll()
         origins.removeAll()
         offset = .zero
@@ -34,6 +38,21 @@ final class OverlayRenderer {
             windows.append(makeWindow(aligned, style, text: text, screenHeight: screen.frame.height))
         }
         origins = windows.map(\.frame.origin)
+        windows.forEach { $0.alphaValue = 0 }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = Self.fade
+            windows.forEach { $0.animator().alphaValue = 1 }
+        }
+    }
+
+    private func fadeOut(_ leaving: [NSWindow]) {
+        guard !leaving.isEmpty else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = Self.fade
+            leaving.forEach { $0.animator().alphaValue = 0 }
+        }, completionHandler: {
+            MainActor.assumeIsolated { leaving.forEach { $0.orderOut(nil) } }
+        })
     }
 
     /// Moves every name by (dx, dy) points from where it was drawn (screen top-left coordinates),

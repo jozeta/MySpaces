@@ -101,6 +101,19 @@ public struct CaptionFingerprint: Equatable, Sendable, Codable {
         return best
     }
 
+    /// Brightness range (0...255) inside a rect above which it holds text, not plain bar.
+    static let contentRange = 60
+
+    /// Whether every rect holds something with text-like contrast (not plain, empty bar).
+    public var hasContent: Bool {
+        let per = Self.sampleWidth * Self.sampleHeight
+        guard count > 0, samples.count == count * per else { return false }
+        return (0..<count).allSatisfy { c in
+            let caption = samples[(c * per)..<((c + 1) * per)]
+            return Int(caption.max() ?? 0) - Int(caption.min() ?? 0) > Self.contentRange
+        }
+    }
+
     public func matches(_ other: CaptionFingerprint) -> Bool {
         difference(to: other) < Self.matchThreshold
     }

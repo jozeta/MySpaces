@@ -60,6 +60,11 @@ final class OverlayCoordinator {
     private var mismatchSeen = false
     /// Indexes of shown names hidden because their captions moved (a desktop added or removed).
     private var hiddenCaptions: Set<Int> = []
+    /// Template captions as read in the previous frame, by template key.
+    private var lastTemplateReadings: [String: CaptionFingerprint] = [:]
+    private var desktopsChangedAt = Date.distantPast
+    /// After desktops change, caption mismatches are retried this long instead of switching names off.
+    static let rearrangeGrace: TimeInterval = 3
     /// Room above and below the caption row in the watch's strip: the follow search and a little more.
     static let stripMargin: CGFloat = 10
     private var arriving = RestingOffset(requiredReadings: OverlayCoordinator.arrivalReadings, countsZero: true)
@@ -242,16 +247,18 @@ final class OverlayCoordinator {
         // Desktops can be added or removed in Mission Control itself. Captions read against the old
         // list of desktops cannot be matched, so re-read it (cheap) and relearn when it changes.
         let before = signature()
+        let beforeOrder = model.controller.primaryDisplaySpaces.map(\.key)
         model.controller.refresh()
-        if signature() != before { spacesChanged() }
+        if signature() != before { spacesChanged(previousOrder: beforeOrder) }
         if settlingSince == nil, !scanInFlight, Date().timeIntervalSince(lastScanStart) > Self.rescanInterval {
             scan()
         }
     }
 
-    private func spacesChanged() {
+    private func spacesChanged(previousOrder: [String]) {
         model.refresh()
         gate.desktopsChanged()
+        desktopsChangedAt = Date()
         consecutiveMisses = 0
         pendingLayout = nil
         arrivingKey = nil
@@ -259,11 +266,22 @@ final class OverlayCoordinator {
         // A scan in flight read its captions against the old list: let it finish unheard.
         scanInFlight = false
         stabilizer.reset()
-        if shownReference == nil {
-            beginSettling()
+        // A name stays only while its desktop is still at the same place in the row: after a
+        // desktop is moved, a caption can look exactly as before ("Desktop 5" is still "Desktop 5")
+        // while another desktop sits behind it. The new layout is learned either way.
+        if let shownRef = shownReference {
+            let order = model.controller.primaryDisplaySpaces.map(\.key)
+            let moved = Set(shownRef.placements.indices.filter { i in
+                let key = shownRef.placements[i].spaceKey
+                return previousOrder.firstIndex(of: key) != order.firstIndex(of: key)
+            })
+            if moved.count == shownRef.placements.count {
+                layoutChanged(from: shownRef)
+                return
+            }
+            if !moved.isEmpty { hideCaptions(moved, of: shownRef) }
         }
-        // Names still shown stay while their captions are in place; the fingerprint watch hides
-        // them when the row moves, and the new layout is learned against the new list.
+        if settlingSince == nil { beginSettling() }
     }
 
     /// Identifies a layout: which desktop is current (its caption sits on a highlight and the bar
@@ -296,8 +314,13 @@ final class OverlayCoordinator {
         let newcomers = !lookForNew ? [] : (references + (pendingLayout.map { [$0] } ?? []))
             .filter { $0.signature == sig && $0.key != shownReference?.key && !hiddenForPointer($0) }
         let candidates = shownList + newcomers
-        guard let stripBottom = candidates.map(\.bandHeight).max(),
-              let stripTop = candidates.flatMap(\.rects).map(\.minY).min().map({ max(0, ($0 - Self.stripMargin).rounded(.down)) }) else { return }
+        // No layout learned yet with this desktop current (just switched): one learned with another
+        // desktop current has its captions in the same places; only the highlight moved.
+        let templates = !lookForNew || newcomers.contains(where: { $0.signature == sig }) ? [] :
+            references.filter { Self.order(of: $0.signature) == Self.order(of: sig) && !hiddenForPointer($0) }
+        let watched = candidates + templates
+        guard let stripBottom = watched.map(\.bandHeight).max(),
+              let stripTop = watched.flatMap(\.rects).map(\.minY).min().map({ max(0, ($0 - Self.stripMargin).rounded(.down)) }) else { return }
         let stripHeight = stripBottom + Self.stripMargin - stripTop
         // The live stream's newest frame. A frame already read is read again only once the screen
         // has been still for a moment: mid-animation, two reads of one frame would look like rest.
@@ -341,6 +364,15 @@ final class OverlayCoordinator {
                 return (best.dx, best.dy)
             }
             let captionDifferences = shownDifferences
+            // Each template's captions as they look now, with backdrops sampled from this frame.
+            let templateReadings = templates.map { t -> (CaptionFingerprint, [PatchStyle])? in
+                guard let (image, ppp) = capture,
+                      let now = CaptionFingerprint(image: image, rects: inStrip(t.rects), pointsPerPixel: ppp), now.hasContent else { return nil }
+                let styles = inStrip(t.rects).map {
+                    BackgroundSampler.style(for: $0, in: image, pointsPerPixel: ppp).offsetBy(dx: 0, dy: stripTop)
+                }
+                return (now, styles)
+            }
             await MainActor.run {
                 self.fingerprintInFlight = false
                 guard capture != nil, session == self.gateSession, self.detector.isOpen else { return }
@@ -350,6 +382,12 @@ final class OverlayCoordinator {
                 // A new layout at rest replaces whatever is shown.
                 if let i = self.arrived(candidates: candidates, found: found, from: shownList.count) {
                     self.arrive(candidates[i], at: found[i]!)
+                    return
+                }
+                if let (template, fingerprint, styles) = self.templateAtRest(templates, templateReadings) {
+                    let ref = Reference(signature: sig, fingerprint: fingerprint,
+                                        styled: Array(zip(template.placements, styles)))
+                    self.arrive(ref, at: (0, 0))
                     return
                 }
                 guard let shownRef = self.shownReference else { return }
@@ -382,6 +420,31 @@ final class OverlayCoordinator {
                 }
             }
         }
+    }
+
+    /// A template whose captions are on screen and unchanged since the previous frame: at rest.
+    private func templateAtRest(_ templates: [Reference], _ readings: [(CaptionFingerprint, [PatchStyle])?])
+        -> (Reference, CaptionFingerprint, [PatchStyle])? {
+        var seen: [String: CaptionFingerprint] = [:]
+        var rested: (Reference, CaptionFingerprint, [PatchStyle])?
+        // Where thumbnail captions would be, the collapsed bar shows windows, which can be still and
+        // detailed too: those count only once the top row of captions is gone (the bar expanded).
+        let collapsed = zip(templates, readings).filter { $0.0.isCollapsedBar }
+        let barExpanded = !collapsed.isEmpty && collapsed.allSatisfy { $0.1 == nil }
+        for (template, reading) in zip(templates, readings) {
+            guard let (now, styles) = reading, template.isCollapsedBar || barExpanded else { continue }
+            if rested == nil, let before = lastTemplateReadings[template.key], before.matches(now) {
+                rested = (template, now, styles)
+            }
+            seen[template.key] = now
+        }
+        lastTemplateReadings = rested == nil ? seen : [:]
+        return rested
+    }
+
+    /// Part of a signature that names the desktops in order, without which one is current.
+    private static func order(of signature: String) -> Substring {
+        signature.split(separator: "|", maxSplits: 1).last ?? ""
     }
 
     /// Index (at or after `start`) of a layout found at one spot for a few frames in a row.
@@ -540,6 +603,7 @@ final class OverlayCoordinator {
 
     private func hide() {
         hideCount += 1
+        lastTemplateReadings = [:]
         hiddenCaptions = []
         mismatchSeen = false
         arrivingKey = nil
@@ -643,7 +707,10 @@ final class OverlayCoordinator {
         let missedRow = !fullScan && row == nil
         if settling && row != nil { captionsSeenWhileSettling = true }
         if missedRow && !settling { forceFullScan = true }
-        let decision = gate.decide(ticket, placements: styled?.map(\.0), settling: settling || missedRow)
+        // Just after desktops were added, removed or moved, Mission Control is still rearranging
+        // and the list of desktops can lag it: a mismatch then means "not ready", not "broken".
+        let rearranging = Date().timeIntervalSince(desktopsChangedAt) < Self.rearrangeGrace
+        let decision = gate.decide(ticket, placements: styled?.map(\.0), settling: settling || missedRow || rearranging)
         switch decision {
         case .ignore:
             return
