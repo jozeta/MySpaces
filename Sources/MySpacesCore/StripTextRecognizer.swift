@@ -23,10 +23,8 @@ public struct StripTextRecognizer: Sendable {
         while top + stripHeight <= limit + 0.5 {
             let pixelRect = CGRect(x: 0, y: (top / pointsPerPixel).rounded(.down),
                                    width: CGFloat(image.width), height: (stripHeight / pointsPerPixel).rounded(.down))
-            if let strip = image.cropping(to: pixelRect) {
-                for label in try recognizeStrip(strip, top: top, pointsPerPixel: pointsPerPixel) {
-                    merge(label, into: &found)
-                }
+            for label in try recognizeRow(image, pixelRect: pixelRect, top: top, pointsPerPixel: pointsPerPixel) {
+                merge(label, into: &found)
             }
             top += stripStep
         }
@@ -41,8 +39,7 @@ public struct StripTextRecognizer: Sendable {
             let top = max(0, mid - stripHeight / 2)
             let pixelRect = CGRect(x: 0, y: (top / pointsPerPixel).rounded(.down),
                                    width: CGFloat(image.width), height: (stripHeight / pointsPerPixel).rounded(.down))
-            guard let strip = image.cropping(to: pixelRect) else { continue }
-            for label in try recognizeStrip(strip, top: top, pointsPerPixel: pointsPerPixel) {
+            for label in try recognizeRow(image, pixelRect: pixelRect, top: top, pointsPerPixel: pointsPerPixel) {
                 merge(label, into: &found)
             }
         }
@@ -60,6 +57,47 @@ public struct StripTextRecognizer: Sendable {
         guard let image = ctx.makeImage() else { return }
         _ = try? StripTextRecognizer(bandHeight: CGFloat(size), stripHeight: CGFloat(size), stripStep: CGFloat(size))
             .recognize(in: image, pointsPerPixel: 1)
+    }
+
+    /// Vision scales a wide image down before reading it, and small captions get lost: a full-width
+    /// strip with six desktops dropped "Desktop 6", ~1300 pt wide was hit and miss, ~1000 pt is
+    /// reliable. Strips are read as tiles this wide (points)...
+    static let tileWidth: CGFloat = 1000
+    /// ...overlapping by more than any caption is wide, so each caption is whole in some tile.
+    static let tileOverlap: CGFloat = 300
+    /// A label this close to a tile's inner edge was cut by it; a neighbouring tile has it whole.
+    static let cutMargin: CGFloat = 2
+
+    /// Start and end (pixels) of the tiles covering a strip `width` pixels wide.
+    static func tiles(width: CGFloat, pointsPerPixel ppp: CGFloat) -> [(CGFloat, CGFloat)] {
+        let tile = (tileWidth / ppp).rounded(), step = ((tileWidth - tileOverlap) / ppp).rounded()
+        guard width > tile else { return [(0, width)] }
+        var tiles: [(CGFloat, CGFloat)] = []
+        var from: CGFloat = 0
+        while true {
+            let to = min(width, from + tile)
+            tiles.append((from, to))
+            if to >= width { return tiles }
+            from += step
+        }
+    }
+
+    private func recognizeRow(_ image: CGImage, pixelRect: CGRect, top: CGFloat, pointsPerPixel ppp: CGFloat) throws -> [RecognizedLabel] {
+        let width = pixelRect.width
+        var labels: [RecognizedLabel] = []
+        for (from, to) in Self.tiles(width: width, pointsPerPixel: ppp) {
+            let rect = CGRect(x: pixelRect.minX + from, y: pixelRect.minY, width: to - from, height: pixelRect.height)
+            guard let strip = image.cropping(to: rect) else { continue }
+            let left = rect.minX * ppp, right = rect.maxX * ppp
+            let innerLeft = from > 0, innerRight = to < width
+            labels += try recognizeStrip(strip, top: top, pointsPerPixel: ppp).compactMap { label in
+                let moved = RecognizedLabel(text: label.text, rect: label.rect.offsetBy(dx: left, dy: 0))
+                if innerLeft && moved.rect.minX < left + Self.cutMargin { return nil }
+                if innerRight && moved.rect.maxX > right - Self.cutMargin { return nil }
+                return moved
+            }
+        }
+        return labels
     }
 
     private func recognizeStrip(_ strip: CGImage, top: CGFloat, pointsPerPixel: CGFloat) throws -> [RecognizedLabel] {

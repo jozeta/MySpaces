@@ -65,6 +65,13 @@ final class StripTextRecognizerTests: XCTestCase {
         XCTAssertTrue(labels.contains { $0.text == "validate" })
     }
 
+    func testTargetedRowReadsAllSixThumbnailCaptions() throws {
+        // Six desktops with the first one current: Vision dropped "Desktop 6" in a full-width strip.
+        let labels = try StripTextRecognizer().recognize(in: fixture("mc-expanded-six"), pointsPerPixel: 1, rowMidYs: [23])
+        assertLabels(labels, [("Desktop 1", 640, 23), ("Desktop 2", 808, 23), ("Desktop 3", 980, 23),
+                              ("Desktop 4", 1150, 23), ("Desktop 5", 1320, 23), ("Desktop 6", 1490, 23)])
+    }
+
     func testTargetedRowWithNoCaptionsFindsNothing() throws {
         let labels = try StripTextRecognizer().recognize(in: fixture("mc-collapsed"), pointsPerPixel: 1, rowMidYs: [20])
         XCTAssertTrue(labels.compactMap { LabelMapper.desktopNumber(in: $0.text) }.isEmpty)
