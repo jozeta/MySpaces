@@ -15,6 +15,8 @@ final class OverlayCoordinator {
     static let slideInDuration: TimeInterval = 0.35
     /// Periodic OCR re-check while open, so a changed layout (Space added/removed) is caught.
     static let rescanInterval: TimeInterval = 1.5
+    /// Settling with no scan started for this long: the chain of probes broke off, start another.
+    static let settleStall: TimeInterval = 0.5
     /// Caption fingerprint watch rate while Mission Control is open (reads the live stream's newest frame).
     static let fingerprintInterval: TimeInterval = 1.0 / 60
     static let maxReferences = 12
@@ -169,6 +171,9 @@ final class OverlayCoordinator {
         if let data = try? Data(contentsOf: Self.layoutsURL),
            let saved = try? JSONDecoder().decode(Layouts.self, from: data) {
             layouts = saved
+            // Saved before scans snapped stretched caption boxes onto their row: relearned instead.
+            layouts.references.removeAll { !LayoutStabilizer.isOneRow($0.placements) }
+            layouts.opening = layouts.opening.filter { LayoutStabilizer.isOneRow($0.value.placements) }
         }
     }
 
@@ -253,6 +258,11 @@ final class OverlayCoordinator {
         if settlingSince == nil, !scanInFlight, Date().timeIntervalSince(lastScanStart) > Self.rescanInterval {
             scan()
         }
+        // While settling, each scan schedules the next. One that ends early (read against an older
+        // list of desktops, or names already shown another way) leaves none coming: start one.
+        if let since = settlingSince, !scanInFlight, Date().timeIntervalSince(max(since, lastScanStart)) > Self.settleStall {
+            scan()
+        }
     }
 
     private func spacesChanged(previousOrder: [String]) {
@@ -281,7 +291,8 @@ final class OverlayCoordinator {
             }
             if !moved.isEmpty { hideCaptions(moved, of: shownRef) }
         }
-        if settlingSince == nil { beginSettling() }
+        // Even if already settling: the scan in flight was read against the old list and ends unheard.
+        beginSettling()
     }
 
     /// Identifies a layout: which desktop is current (its caption sits on a highlight and the bar
@@ -658,6 +669,7 @@ final class OverlayCoordinator {
                 let labels = try rows.map { try recognizer.recognize(in: image, pointsPerPixel: ppp, rowMidYs: $0) }
                     ?? recognizer.recognize(in: image, pointsPerPixel: ppp)
                 let placements = LabelMapper.placements(labels: labels, displaySpaces: displaySpaces, names: names)
+                    .map(LayoutStabilizer.snappedToRow)
                 // Vision's caption boxes are loose; size patches to the real glyphs.
                 let styled = placements?.map { p -> (LabelPlacement, PatchStyle) in
                     let tight = BackgroundSampler.textBounds(for: p.rect, in: image, pointsPerPixel: ppp)
