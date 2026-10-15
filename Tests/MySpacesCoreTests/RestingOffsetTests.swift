@@ -28,4 +28,12 @@ final class RestingOffsetTests: XCTestCase {
         XCTAssertFalse(r.observe(dx: 2, dy: 0))
         XCTAssertTrue(r.observe(dx: 2, dy: 0))
     }
+
+    func testSteadyZeroCountsWhenAllowed() {
+        // Deciding when a not-yet-shown layout is at rest: in place counts too.
+        var r = RestingOffset(requiredReadings: 3, countsZero: true)
+        XCTAssertFalse(r.observe(dx: 0, dy: 0))
+        XCTAssertFalse(r.observe(dx: 0, dy: 0))
+        XCTAssertTrue(r.observe(dx: 0, dy: 0))
+    }
 }

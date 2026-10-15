@@ -15,9 +15,11 @@ final class OverlayCoordinator {
     static let slideInDuration: TimeInterval = 0.35
     /// Periodic OCR re-check while open, so a changed layout (Space added/removed) is caught.
     static let rescanInterval: TimeInterval = 1.5
-    /// Caption fingerprint watch rate while Mission Control is open (~25 ms per capture).
-    static let fingerprintInterval: TimeInterval = 1.0 / 30
+    /// Caption fingerprint watch rate while Mission Control is open (reads the live stream's newest frame).
+    static let fingerprintInterval: TimeInterval = 1.0 / 60
     static let maxReferences = 12
+    /// Captions within this many points of a remembered layout's are that layout, learned again.
+    static let sameLayoutTolerance: CGFloat = 8
     // Measured relative to Mission Control opening: captions start appearing ~0.19 s after the
     // Dock window appears; by ~0.23 s they are within ~5 pt of where they rest (~0.5 s). The
     // remembered opening layout appears then, at the resting place, fully opaque: its patches are
@@ -48,6 +50,20 @@ final class OverlayCoordinator {
     /// Readings (~30 Hz) at one unchanged offset before it counts as the layout's resting place.
     static let restingReadings = 6
     private var restingOffset = RestingOffset(requiredReadings: OverlayCoordinator.restingReadings)
+    /// Frames (~30 Hz) a layout must stay at one spot before its names are shown.
+    static let arrivalReadings = 2
+    /// No new frame for this long: the screen is still, and its last frame may be read again.
+    static let stillAfter: TimeInterval = 0.05
+    private let bandStream = BandStream()
+    private var lastFrameAt: Date?
+    /// The shown layout's captions were missing from the last trusted frame.
+    private var mismatchSeen = false
+    /// Room above and below the caption row in the watch's strip: the follow search and a little more.
+    static let stripMargin: CGFloat = 10
+    private var arriving = RestingOffset(requiredReadings: OverlayCoordinator.arrivalReadings, countsZero: true)
+    private var arrivingKey: String?
+    /// Read by OCR but not yet seen at rest: the fingerprint watch shows it once it is still.
+    private var pendingLayout: Reference?
     /// The collapsed bar reacts to the pointer a few points below its captions.
     static let barEntryMargin: CGFloat = 12
     private var shownOffset: (dx: Int, dy: Int) = (0, 0)
@@ -81,7 +97,7 @@ final class OverlayCoordinator {
             })
         }
         var bandHeight: CGFloat { (rects.map(\.maxY).max() ?? 0) + 4 }
-        var key: String { "\(signature)@\(Int(rects.first?.midY ?? 0))" }
+        var key: String { "\(signature)@\(Int(rects.first?.midX ?? 0)),\(Int(rects.first?.midY ?? 0))" }
         /// Captions in the top strip (collapsed bar, ~59 pt) rather than under thumbnails (~179 pt).
         var isCollapsedBar: Bool { (rects.map(\.minY).max() ?? 0) < 120 }
     }
@@ -126,6 +142,13 @@ final class OverlayCoordinator {
     /// Whether any probe since settling began found captions on a known row.
     private var captionsSeenWhileSettling = false
     private var shown: [LabelPlacement] = []
+    /// Where the shown names are now: as drawn, moved by however far they followed their captions.
+    private var shownNow: [LabelPlacement] {
+        shown.map { p in
+            LabelPlacement(rect: p.rect.offsetBy(dx: CGFloat(shownOffset.dx), dy: CGFloat(shownOffset.dy)),
+                           name: p.name, spaceKey: p.spaceKey, maxWidth: p.maxWidth)
+        }
+    }
 
     init(model: AppModel) {
         self.model = model
@@ -152,7 +175,9 @@ final class OverlayCoordinator {
 
     private func missionControlChanged(_ open: Bool) {
         gateSession += 1
+        pendingLayout = nil
         if open {
+            bandStream.start()
             gate.open()
             openedAt = Date()
             firstShowInSession = true
@@ -185,6 +210,7 @@ final class OverlayCoordinator {
             }
         } else {
             gate.close()
+            bandStream.stop()
             watchTimer?.invalidate()
             fingerprintTimer?.invalidate()
             pointerTimer?.invalidate()
@@ -234,25 +260,39 @@ final class OverlayCoordinator {
         // While the pointer is in the collapsed bar it is expanding: its captions are still in
         // place for a frame or two, but showing their names again would flicker over the expansion.
         let candidates = shownReference.map { [$0] }
-            ?? references.filter { $0.signature == sig && !($0.isCollapsedBar && pointerInBar($0)) }
-        guard let height = candidates.map(\.bandHeight).max() else { return }
+            ?? (references + (pendingLayout.map { [$0] } ?? []))
+                .filter { $0.signature == sig && !($0.isCollapsedBar && pointerInBar($0)) }
+        guard let stripBottom = candidates.map(\.bandHeight).max(),
+              let stripTop = candidates.flatMap(\.rects).map(\.minY).min().map({ max(0, ($0 - Self.stripMargin).rounded(.down)) }) else { return }
+        let stripHeight = stripBottom + Self.stripMargin - stripTop
+        // The live stream's newest frame. A frame already read is read again only once the screen
+        // has been still for a moment: mid-animation, two reads of one frame would look like rest.
+        let streamed = bandStream.isRunning ? bandStream.frame(top: stripTop, height: stripHeight) : nil
+        if let streamed, streamed.at == lastFrameAt, Date().timeIntervalSince(streamed.at) < Self.stillAfter { return }
+        lastFrameAt = streamed?.at
         fingerprintInFlight = true
         let session = gateSession
         let hides = hideCount
         let followRange = Self.followRange
         Task.detached(priority: .userInitiated) {
-            let watched = try? await ScreenBandCapture.captureWatched(heightPoints: height)
+            let watched = if let streamed {
+                (streamed.image, pointsPerPixel: streamed.pointsPerPixel, trusted: streamed.trusted)
+            } else {
+                try? await ScreenBandCapture.captureWatched(top: stripTop, heightPoints: stripHeight)
+            }
+            // Caption rects are in screen points; the strip image starts at `stripTop`.
+            let inStrip = { (rects: [CGRect]) in rects.map { $0.offsetBy(dx: 0, dy: -stripTop) } }
             let capture = watched.map { ($0.0, $0.pointsPerPixel) }
             let trusted = watched?.trusted ?? false
             let current = await MainActor.run { self.shownOffset }
             // Exact check at the current offset first (cheap); search nearby only if it fails.
             let found = candidates.map { ref -> (dx: Int, dy: Int)? in
                 guard let (image, ppp) = capture else { return nil }
-                let here = ref.rects.map { $0.offsetBy(dx: CGFloat(current.dx), dy: CGFloat(current.dy)) }
+                let here = inStrip(ref.rects).map { $0.offsetBy(dx: CGFloat(current.dx), dy: CGFloat(current.dy)) }
                 if let now = CaptionFingerprint(image: image, rects: here, pointsPerPixel: ppp), ref.fingerprint.matches(now) {
                     return current
                 }
-                return CaptionFingerprint.locate(ref.fingerprint, expectedAt: ref.rects, in: image,
+                return CaptionFingerprint.locate(ref.fingerprint, expectedAt: inStrip(ref.rects), in: image,
                                                  pointsPerPixel: ppp, maxShift: followRange)
             }
             await MainActor.run {
@@ -264,6 +304,7 @@ final class OverlayCoordinator {
                 if let shownRef = self.shownReference {
                     let anticipating = self.anticipatedUntil.map { Date() < $0 } ?? false
                     if let offset = found.first ?? nil, !(anticipating && offset != (0, 0)) {
+                        self.mismatchSeen = false
                         self.follow(offset)
                         self.confirm(shownRef)
                         if self.restingOffset.observe(dx: offset.dx, dy: offset.dy) { self.rebase(shownRef, at: offset) }
@@ -273,17 +314,32 @@ final class OverlayCoordinator {
                     } else if !trusted {
                         // The capture filter may predate our newest windows (the window server lists
                         // new windows a little late) and so see our own names: not a reason to hide.
+                    } else if !self.mismatchSeen {
+                        // One odd frame is not enough to hide (a filter change landing mid-frame);
+                        // the next frame, ~17 ms later, decides.
+                        self.mismatchSeen = true
                     } else {
                         self.layoutChanged(from: shownRef)
                     }
-                } else if let i = found.firstIndex(where: { $0.map { $0 == (0, 0) } ?? false }) {
-                    // Only where it rests: found a few points off, the captions are still sliding
-                    // in, and names shown there would creep along with them. (A layout that really
-                    // moved is picked up by the OCR scan.)
+                } else if let i = found.firstIndex(where: { $0.map { $0 == (0, 0) } ?? false }) ?? found.firstIndex(where: { $0 != nil }),
+                          let offset = found[i] {
+                    // Shown once it is still: found at one spot for a few frames in a row. Mid-slide
+                    // the spot changes every frame. Where it rests may be a few points from where it
+                    // was learned (the thumbnail row creeps for a second): it is moved there.
                     let ref = candidates[i]
+                    if self.arrivingKey != ref.key {
+                        self.arrivingKey = ref.key
+                        self.arriving.reset()
+                    }
+                    guard self.arriving.observe(dx: offset.dx, dy: offset.dy) else { return }
+                    let resting = offset == (0, 0) ? ref : ref.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy))
                     self.settlingSince = nil
-                    self.render(ref)
-                    self.confirm(ref)
+                    self.pendingLayout = nil
+                    self.remember(resting)
+                    self.render(resting)
+                    self.confirm(resting)
+                } else {
+                    self.arrivingKey = nil
                 }
             }
         }
@@ -360,7 +416,7 @@ final class OverlayCoordinator {
         if !LayoutStabilizer.same(ref.styled.map(\.0), shown) {
             renderer.show(ref.styled)
             shownOffset = (0, 0)
-            ScreenBandCapture.invalidateFilter()
+            overlaysChanged()
             shown = ref.styled.map(\.0)
         }
         shownReference = ref
@@ -368,17 +424,28 @@ final class OverlayCoordinator {
     }
 
     private func remember(_ ref: Reference) {
-        references.removeAll { $0.signature == ref.signature && abs(($0.rects.first?.midY ?? 0) - (ref.rects.first?.midY ?? 0)) < 8 }
+        // Only the same layout learned again replaces one: the thumbnail row rests in two places at
+        // one height (off-centre after the pointer enters, centred after it leaves), keep both.
+        references.removeAll {
+            $0.signature == ref.signature && LayoutStabilizer.same($0.placements, ref.placements, tolerance: Self.sameLayoutTolerance)
+        }
         references.insert(ref, at: 0)
         references = Array(references.prefix(Self.maxReferences))
     }
 
+    private func overlaysChanged() {
+        ScreenBandCapture.invalidateFilter()
+        bandStream.overlaysChanged()
+    }
+
     private func hide() {
         hideCount += 1
+        mismatchSeen = false
+        arrivingKey = nil
         shownConfirmed = false
         restingOffset.reset()
         renderer.hideAll()
-        ScreenBandCapture.invalidateFilter()
+        overlaysChanged()
         shown = []
         shownReference = nil
         shownOffset = (0, 0)
@@ -489,11 +556,12 @@ final class OverlayCoordinator {
                 let overdue = settlingSince.map { Date().timeIntervalSince($0) > Self.settleCap } ?? false
                 guard settled || overdue else {
                     if fullScan, let row { candidateRow = row.midY }
+                    if let fingerprint { pendingLayout = Reference(signature: sig, fingerprint: fingerprint, styled: styled ?? []) }
                     DispatchQueue.main.asyncAfter(deadline: .now() + Self.probeInterval) { [weak self] in self?.scan() }
                     return
                 }
                 settlingSince = nil
-            } else if !LayoutStabilizer.same(placements, shown) {
+            } else if !LayoutStabilizer.same(placements, shownNow) {
                 // Layout changed since it was drawn: hide and wait for it to settle.
                 hide()
                 beginSettling()
@@ -509,7 +577,7 @@ final class OverlayCoordinator {
                 confirm(ref)
             } else if !LayoutStabilizer.same(placements, shown) { // avoid flicker
                 renderer.show(styled)
-                ScreenBandCapture.invalidateFilter()
+                overlaysChanged()
                 shown = placements
             }
         }

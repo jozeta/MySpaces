@@ -43,7 +43,9 @@ public struct PatchBackdrop: Equatable, Sendable, Codable {
 
 public enum BackgroundSampler {
     static let sampleWidth: CGFloat = 4
-    static let gap: CGFloat = 3
+    /// Patch margin beside the glyphs: room for names trailing a sliding row by a few points
+    /// (the thumbnail row re-centres when the pointer leaves), short of the highlight's edge.
+    static let gap: CGFloat = 5
 
     /// Glyph columns are at least this much brighter than the rect's median luminance.
     static let glyphContrast: CGFloat = 0.25
@@ -94,8 +96,11 @@ public enum BackgroundSampler {
     /// and keeps their colour row by row.
     public static func style(for rect: CGRect, in image: CGImage, pointsPerPixel ppp: CGFloat) -> PatchStyle {
         let glyphs = textBounds(for: rect, in: image, pointsPerPixel: ppp)
-        let covered = CGRect(x: glyphs.minX - gap, y: glyphs.minY - verticalMargin,
-                             width: glyphs.width + 2 * gap, height: glyphs.height + 2 * verticalMargin)
+        // Top and bottom on whole pixels: each sampled row then maps back onto the pixel row it came
+        // from, so edges in the background (the bar's lower edge, a selection frame) line up.
+        let top = ((glyphs.minY - verticalMargin) / ppp).rounded(.down) * ppp
+        let bottom = ((glyphs.maxY + verticalMargin) / ppp).rounded(.up) * ppp
+        let covered = CGRect(x: glyphs.minX - gap, y: top, width: glyphs.width + 2 * gap, height: bottom - top)
         let columns = [
             CGRect(x: covered.minX - sampleWidth, y: covered.minY, width: sampleWidth, height: covered.height),
             CGRect(x: covered.maxX, y: covered.minY, width: sampleWidth, height: covered.height),

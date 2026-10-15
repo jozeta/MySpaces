@@ -18,17 +18,15 @@ final class OverlayRenderer {
     func show(_ items: [(LabelPlacement, PatchStyle)]) {
         hideAll()
         guard let screen = NSScreen.screens.first, !items.isEmpty else { return }
-        // One size for the whole row: OCR box heights vary per caption, Mission Control's don't.
-        let heights = items.map(\.0.rect.height).sorted()
-        let fontSize = min(14, max(10, (heights[heights.count / 2] * 0.68).rounded()))
-        // ...and one centre line, so names in a row share a baseline.
+        // One centre line, so names in a row share a baseline.
         let mids = items.map(\.0.rect.midY).sorted()
         let rowMidY = mids[mids.count / 2]
+        let text = rowMidY < Self.collapsedBarMaxY ? Self.collapsedText : Self.thumbnailText
         for (placement, style) in items {
             let r = placement.rect
             let aligned = LabelPlacement(rect: CGRect(x: r.minX, y: rowMidY - r.height / 2, width: r.width, height: r.height),
                                          name: placement.name, spaceKey: placement.spaceKey, maxWidth: placement.maxWidth)
-            windows.append(makeWindow(aligned, style, fontSize: fontSize, screenHeight: screen.frame.height))
+            windows.append(makeWindow(aligned, style, text: text, screenHeight: screen.frame.height))
         }
         origins = windows.map(\.frame.origin)
     }
@@ -50,11 +48,23 @@ final class OverlayRenderer {
         offset = .zero
     }
 
-    /// Matches Mission Control's caption style (regular weight, ~0.68 × caption box height).
-    private func makeWindow(_ p: LabelPlacement, _ style: PatchStyle, fontSize: CGFloat, screenHeight: CGFloat) -> NSWindow {
+    struct TextStyle {
+        let size: CGFloat
+        let weight: NSFont.Weight
+        let opacity: CGFloat
+    }
+    /// Mission Control's caption text, fitted pixel by pixel against real captions (macOS 27).
+    /// The top bar: 14 pt regular, white at ~72%.
+    static let collapsedText = TextStyle(size: 14, weight: .regular, opacity: 0.72)
+    /// Under thumbnails the same captions are shrunk ~0.84×, which reads as 11.75 pt medium at ~63%.
+    static let thumbnailText = TextStyle(size: 11.75, weight: .medium, opacity: 0.63)
+    /// Caption rows above this (points from the top) are the collapsed bar.
+    static let collapsedBarMaxY: CGFloat = 120
+
+    private func makeWindow(_ p: LabelPlacement, _ style: PatchStyle, text: TextStyle, screenHeight: CGFloat) -> NSWindow {
         let label = NSTextField(labelWithString: p.name)
-        label.font = .systemFont(ofSize: fontSize, weight: .regular)
-        label.textColor = NSColor.white.withAlphaComponent(0.92)
+        label.font = .systemFont(ofSize: text.size, weight: text.weight)
+        label.textColor = NSColor.white.withAlphaComponent(text.opacity)
         label.lineBreakMode = .byTruncatingTail
         label.alignment = .center
         label.sizeToFit()

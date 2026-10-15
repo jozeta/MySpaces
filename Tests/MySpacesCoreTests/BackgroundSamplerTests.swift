@@ -51,6 +51,19 @@ final class BackgroundSamplerTests: XCTestCase {
         XCTAssertEqual(b.colour(at: CGPoint(x: 100, y: 30)).green, 0.2, accuracy: 0.03)
     }
 
+    func testRowsLineUpWithPixelsForFractionalCaptionBox() throws {
+        // Vision's boxes are fractional; a sampled row must land on the pixel row it came from,
+        // or edges in the background (the bar's lower edge, a selection frame) show as stripes.
+        let img = image(height: 60) { ctx in
+            ctx.setFillColor(gray: 0.2, alpha: 1); ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 60))
+            ctx.setFillColor(gray: 0.8, alpha: 1); ctx.fill(CGRect(x: 0, y: 60 - 45, width: 200, height: 1)) // row 44 top-left
+        }
+        let b = try XCTUnwrap(backdrop(BackgroundSampler.style(for: CGRect(x: 70, y: 22.4, width: 60, height: 16), in: img, pointsPerPixel: 1)))
+        XCTAssertEqual(b.colour(at: CGPoint(x: 100, y: 44.5)).green, 0.8, accuracy: 0.03)
+        XCTAssertEqual(b.colour(at: CGPoint(x: 100, y: 43.5)).green, 0.2, accuracy: 0.03)
+        XCTAssertEqual(b.colour(at: CGPoint(x: 100, y: 45.5)).green, 0.2, accuracy: 0.03)
+    }
+
     func testSmoothHorizontalGradientIsInterpolated() throws {
         let img = image { ctx in
             for x in 0..<200 {
