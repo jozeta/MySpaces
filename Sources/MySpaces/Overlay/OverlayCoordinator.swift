@@ -68,6 +68,12 @@ final class OverlayCoordinator {
     private var pendingLayout: Reference?
     /// The collapsed bar reacts to the pointer a few points below its captions.
     static let barEntryMargin: CGFloat = 12
+    /// Mission Control starts expanding the bar within this long of the pointer entering it.
+    static let expansionStartsWithin: TimeInterval = 0.15
+    /// Pointer hid the collapsed names at this time and height (points from the top).
+    private var hoverHide: (at: Date, y: CGFloat)?
+    /// The bar did not expand with the pointer at this height: only higher up hides the names again.
+    private var noExpansionBelowY: CGFloat?
     private var shownOffset: (dx: Int, dy: Int) = (0, 0)
     private let recognizer = StripTextRecognizer(bandHeight: OverlayCoordinator.bandHeight)
     private var watchTimer: Timer?
@@ -288,7 +294,7 @@ final class OverlayCoordinator {
         let shownList = shownReference.map { [$0] } ?? []
         let lookForNew = shownReference == nil || !hiddenCaptions.isEmpty
         let newcomers = !lookForNew ? [] : (references + (pendingLayout.map { [$0] } ?? []))
-            .filter { $0.signature == sig && $0.key != shownReference?.key && !($0.isCollapsedBar && pointerInBar($0)) }
+            .filter { $0.signature == sig && $0.key != shownReference?.key && !hiddenForPointer($0) }
         let candidates = shownList + newcomers
         guard let stripBottom = candidates.map(\.bandHeight).max(),
               let stripTop = candidates.flatMap(\.rects).map(\.minY).min().map({ max(0, ($0 - Self.stripMargin).rounded(.down)) }) else { return }
@@ -398,6 +404,10 @@ final class OverlayCoordinator {
     }
 
     private func arrive(_ ref: Reference, at offset: (dx: Int, dy: Int)) {
+        if ref.isCollapsedBar, let hoverHide, pointerInBar(ref) {
+            noExpansionBelowY = min(hoverHide.y, pointerY())
+        }
+        hoverHide = nil
         let resting = offset == (0, 0) ? ref : ref.offsetBy(dx: CGFloat(offset.dx), dy: CGFloat(offset.dy))
         settlingSince = nil
         pendingLayout = nil
@@ -448,14 +458,30 @@ final class OverlayCoordinator {
 
     /// The collapsed bar expands as soon as the pointer enters it. Hide the collapsed names at
     /// that moment instead of a frame or two later, when the captions have started to move.
-    /// (If it does not expand after all, the fingerprint watch shows them again once the pointer leaves.)
+    /// The margin is a guess (macOS expands a few points below the captions): when the bar does
+    /// not expand after all, the names come back and stay until the pointer moves further up.
     private func pointerTick() {
-        guard let shownRef = shownReference, shownRef.isCollapsedBar, pointerInBar(shownRef) else { return }
+        let y = pointerY()
+        guard let shownRef = shownReference, shownRef.isCollapsedBar else {
+            if let reference = references.first(where: \.isCollapsedBar), !pointerInBar(reference) { noExpansionBelowY = nil }
+            return
+        }
+        guard pointerInBar(shownRef) else { noExpansionBelowY = nil; return }
+        if let floor = noExpansionBelowY, y >= floor { return }
+        hoverHide = (at: Date(), y: y)
         layoutChanged(from: shownRef)
     }
 
     private func pointerInBar(_ ref: Reference) -> Bool {
         pointerY() < ref.bandHeight + Self.barEntryMargin
+    }
+
+    /// Collapsed names hidden for the pointer are not shown again while the bar may still be
+    /// starting to expand (its captions stay put for a frame or two first).
+    private func hiddenForPointer(_ ref: Reference) -> Bool {
+        guard ref.isCollapsedBar, pointerInBar(ref) else { return false }
+        guard let hoverHide else { return noExpansionBelowY.map { pointerY() < $0 } ?? true }
+        return Date().timeIntervalSince(hoverHide.at) < Self.expansionStartsWithin
     }
 
     /// Pointer distance from the top of the main screen, in points.
@@ -560,18 +586,11 @@ final class OverlayCoordinator {
         let band = Self.bandHeight
         let sig = signature()
         let started = Date()
-        let streamed = rows.flatMap { rows -> BandStream.Frame? in
-            guard bandStream.isRunning, let lowest = rows.max(),
-                  lowest + recognizer.stripHeight / 2 < BandStream.heightPoints,
-                  let frame = bandStream.frame(top: 0, height: BandStream.heightPoints), frame.trusted else { return nil }
-            return frame
-        }
         Task.detached(priority: .userInitiated) {
             do {
-                // The live stream's newest frame when it covers the rows and excludes our own names;
-                // a screenshot takes 30-120 ms while Mission Control animates.
-                let (image, ppp) = if let streamed { (streamed.image, streamed.pointsPerPixel) }
-                    else { try await ScreenBandCapture.capture(heightPoints: band) }
+                // A fresh screenshot, not the live stream: a stream frame can still hold our own names
+                // for a moment after they change, and reading those breaks the caption mapping.
+                let (image, ppp) = try await ScreenBandCapture.capture(heightPoints: band)
                 let labels = try rows.map { try recognizer.recognize(in: image, pointsPerPixel: ppp, rowMidYs: $0) }
                     ?? recognizer.recognize(in: image, pointsPerPixel: ppp)
                 let placements = LabelMapper.placements(labels: labels, displaySpaces: displaySpaces, names: names)
@@ -610,6 +629,14 @@ final class OverlayCoordinator {
         if shownReference != nil, started < shownAt { return }
         // A remembered layout is fading in ahead of its captions; the fingerprint confirms it.
         if anticipatedUntil != nil { return }
+        // The capture still showed our own names (they were drawn just before it): it says
+        // nothing about Mission Control's captions, so it must not count as a mismatch.
+        // (A name like "Desktop 3" could be a real caption, so it is not counted.)
+        let ownNames = Set(shown.map(\.name).filter { $0.range(of: #"^Desktop \d{1,2}$"#, options: .regularExpression) == nil })
+        if !ownNames.isEmpty, labels.contains(where: { ownNames.contains($0.text) }) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.probeInterval) { [weak self] in self?.scan() }
+            return
+        }
         let row = LabelMapper.captionRow(in: labels)
         // A known row with no captions means the bar moved or changed shape, not a mismatch.
         // While settling the captions may simply not be drawn yet, so keep probing the fast path.
@@ -659,6 +686,9 @@ final class OverlayCoordinator {
             if let fingerprint {
                 let ref = Reference(signature: sig, fingerprint: fingerprint, styled: styled)
                 remember(ref)
+                // The pointer just entered the bar: leave it to the fingerprint watch, which shows
+                // these names again only if the bar does not expand.
+                guard !hiddenForPointer(ref) else { return }
                 render(ref)
                 confirm(ref)
             } else if !LayoutStabilizer.same(placements, shown) { // avoid flicker
