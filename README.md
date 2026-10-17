@@ -65,13 +65,20 @@ If the menu-bar icon is hidden on a crowded menu bar, hold ⌘ and drag it into 
 
 ### Permissions
 
+Both are under System Settings › Privacy & Security.
+
 | Permission | Used for |
 | --- | --- |
-| Accessibility | Switching desktops from the menu: MySpaces presses your Mission Control keyboard shortcuts for you. |
-| Screen Recording | Finding macOS's desktop labels on screen so your names can be placed over them. Nothing is saved or sent anywhere. |
+| Device Control and Data Access (formerly Accessibility) | Switching desktops from the menu: MySpaces presses your Mission Control keyboard shortcuts for you. |
+| Screen & System Audio Recording | Finding macOS's desktop labels on screen so your names can be placed over them. Nothing is saved or sent anywhere. |
 
-Both are optional: without Accessibility you can still name desktops; without Screen Recording the
-names show everywhere except Mission Control.
+Both are optional: without Device Control you can still name desktops; without Screen Recording the
+names show everywhere except Mission Control. macOS applies Screen Recording only after MySpaces
+relaunches; the menu offers the relaunch.
+
+If you install a new build from somewhere else (for example from source after using a release), macOS
+sees a different signature and asks again. Remove the old MySpaces entries from both lists and allow
+the new one.
 
 For instant switching to any desktop, turn on **Switch to Desktop 1…** under System Settings ›
 Keyboard › Keyboard Shortcuts › Mission Control. Without it, MySpaces steps across desktops one at a

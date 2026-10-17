@@ -12,6 +12,10 @@ final class OverlayRenderer {
     /// Mission Control's own captions.
     static let fade: TimeInterval = 0.08
 
+    /// Name windows drawn, and how many of them the window server still has on screen.
+    var windowCount: Int { windows.count }
+    var visibleCount: Int { windows.filter(\.isVisible).count }
+
     /// Hides some names (by index), keeping the others where they are.
     func hide(_ indices: Set<Int>) {
         fadeOut(indices.filter(windows.indices.contains).map { windows[$0] })

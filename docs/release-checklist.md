@@ -17,7 +17,9 @@ Run before every release and after every macOS update. Record macOS version and 
 ## Switching
 - [ ] Step switching across a full-screen Space works
 - [ ] Direct switching works with "Switch to Desktop N" enabled
-- [ ] Revoke Accessibility: clicking a row explains and offers the setting; grant restores switching
+- [ ] Revoke Device Control (Accessibility): clicking a row explains and offers the setting; grant restores switching
+- [ ] "Reset and ask again" asks for confirmation before clearing a permission
+- [ ] Settings › Diagnostics shows names/windows, last hide and last wake; after a sleep and wake, names still show in Mission Control
 
 ## Switch name panel
 - [ ] Switching desktops (menu, shortcut, swipe, Mission Control) shows the new name, centred, for about a second

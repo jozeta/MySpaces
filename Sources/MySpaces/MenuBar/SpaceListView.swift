@@ -67,8 +67,8 @@ struct SpaceListView: View {
                     if model.accessibilityRequested {
                         PermissionCard(
                             symbol: "hourglass",
-                            title: "Waiting for Accessibility",
-                            detail: "Turn on MySpaces under Accessibility. Already on but still asked? macOS is holding an old entry for MySpaces — reset it and allow again.",
+                            title: "Waiting for access",
+                            detail: "Turn on MySpaces under Privacy & Security › Device Control and Data Access. Already on but still asked? macOS may hold an old entry for MySpaces: reset it and allow again.",
                             actionTitle: "Settings…",
                             action: Permissions.openAccessibilitySettings,
                             secondaryTitle: "Reset and ask again",
@@ -78,7 +78,7 @@ struct SpaceListView: View {
                         PermissionCard(
                             symbol: "arrow.left.arrow.right",
                             title: "Switch desktops from this menu",
-                            detail: "MySpaces presses your Mission Control shortcuts for you. macOS asks for Accessibility access to allow that.",
+                            detail: "MySpaces presses your Mission Control shortcuts for you. macOS asks for Device Control access to allow that.",
                             actionTitle: "Allow…",
                             action: model.requestAccessibility,
                             onDismiss: { dismissedAccessibilityHint = true })
@@ -89,7 +89,7 @@ struct SpaceListView: View {
                         PermissionCard(
                             symbol: "arrow.clockwise",
                             title: "Relaunch to finish",
-                            detail: "After turning on MySpaces under Screen & System Audio Recording, relaunch so macOS applies it. Already on but still asked? Reset and allow again.",
+                            detail: "After turning on MySpaces under Screen & System Audio Recording, relaunch so macOS applies it. Still asked after relaunching? Reset and allow again.",
                             actionTitle: "Relaunch",
                             action: model.relaunch,
                             secondaryTitle: "Reset and ask again",

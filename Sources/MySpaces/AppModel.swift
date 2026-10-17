@@ -62,15 +62,29 @@ final class AppModel: ObservableObject {
     }
 
     func resetAccessibility() {
+        guard confirmReset("Device Control and Data Access") else { return }
         Permissions.reset("Accessibility")
         Permissions.requestAccessibility()
         accessibilityRequested = true
     }
 
     func resetScreenRecording() {
+        guard confirmReset("Screen & System Audio Recording") else { return }
         Permissions.reset("ScreenCapture")
         _ = Permissions.requestScreenRecording()
         screenRecordingRequested = true
+    }
+
+    /// A reset also removes access that was just granted (and macOS applies Screen Recording only
+    /// after a relaunch, so a fresh grant can still look missing): ask first.
+    private func confirmReset(_ list: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Reset MySpaces in \(list)?"
+        alert.informativeText = "This removes MySpaces from that list, including access you have just turned on. Use it only if MySpaces is switched on there and still asks after a relaunch. Then allow MySpaces again."
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     /// The first request shows the macOS prompt and registers MySpaces; later requests can't
@@ -112,7 +126,7 @@ final class AppModel: ObservableObject {
         // A second click before the first switch lands would plan from a stale current desktop.
         guard !switchInFlight else { return }
         guard Permissions.accessibilityGranted else {
-            notice = "Allow Accessibility access to switch desktops."
+            notice = "Allow Device Control access to switch desktops."
             requestAccessibility()
             return
         }

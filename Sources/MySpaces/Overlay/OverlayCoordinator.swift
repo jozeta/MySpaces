@@ -37,6 +37,14 @@ final class OverlayCoordinator {
     var visionReady = false
     private(set) var consecutiveMisses = 0
     private(set) var lastScanSummary = "No scan yet"
+    /// For the diagnostics report: names were once found lost after the app had run for days.
+    private(set) var lastHide = "none"
+    private(set) var lastWake: Date?
+    let launchedAt = Date()
+    private(set) var redraws = 0
+    var drawnSummary: String {
+        "\(shown.count) shown, \(hiddenCaptions.count) hidden, \(renderer.windowCount) windows (\(renderer.visibleCount) on screen)"
+    }
 
     private let model: AppModel
     private let detector = MissionControlDetector()
@@ -185,6 +193,10 @@ final class OverlayCoordinator {
     func start() {
         detector.onChange = { [weak self] open in self?.missionControlChanged(open) }
         detector.start()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.lastWake = Date() }
+            log.notice("woke from sleep")
+        }
         DispatchQueue.global(qos: .utility).async {
             StripTextRecognizer.prewarm()
             DispatchQueue.main.async { self.visionReady = true }
@@ -234,7 +246,7 @@ final class OverlayCoordinator {
             pointerTimer?.invalidate()
             settlingSince = nil
             anticipatedUntil = nil
-            hide()
+            hide("Mission Control closed")
             saveLayouts()
             model.refresh()
         }
@@ -258,11 +270,25 @@ final class OverlayCoordinator {
         if settlingSince == nil, !scanInFlight, Date().timeIntervalSince(lastScanStart) > Self.rescanInterval {
             scan()
         }
+        restoreLostNames()
         // While settling, each scan schedules the next. One that ends early (read against an older
         // list of desktops, or names already shown another way) leaves none coming: start one.
         if let since = settlingSince, !scanInFlight, Date().timeIntervalSince(max(since, lastScanStart)) > Self.settleStall {
             scan()
         }
+    }
+
+    /// Names this coordinator counts as shown whose windows are no longer on screen: drawn again.
+    /// (Seen once after the app had run for days: scans kept matching, nothing was drawn.)
+    private func restoreLostNames() {
+        guard let ref = shownReference, anticipatedUntil == nil,
+              renderer.visibleCount < shown.count - hiddenCaptions.count else { return }
+        log.notice("names lost: \(self.drawnSummary, privacy: .public); drawing them again")
+        redraws += 1
+        renderer.show(ref.styled)
+        renderer.move(dx: shownOffset.dx, dy: shownOffset.dy)
+        if !hiddenCaptions.isEmpty { renderer.hide(hiddenCaptions) }
+        overlaysChanged()
     }
 
     private func spacesChanged(previousOrder: [String]) {
@@ -515,7 +541,7 @@ final class OverlayCoordinator {
     /// hide at once and show again only when the new layout is at rest.
     private func layoutChanged(from old: Reference) {
         anticipatedUntil = nil
-        hide()
+        hide("captions changed")
         beginSettling()
     }
 
@@ -612,7 +638,8 @@ final class OverlayCoordinator {
         bandStream.overlaysChanged()
     }
 
-    private func hide() {
+    private func hide(_ reason: String) {
+        lastHide = "\(reason) at \(Date().formatted(date: .omitted, time: .standard))"
         hideCount += 1
         lastTemplateReadings = [:]
         hiddenCaptions = []
@@ -731,7 +758,7 @@ final class OverlayCoordinator {
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.probeInterval) { [weak self] in self?.scan() }
         case .hide:
             settlingSince = nil
-            hide()
+            hide("captions not matched")
             consecutiveMisses += 1
             let texts = labels.map(\.text).joined(separator: ", ")
             lastScanSummary = String(format: "%.2fs · mismatch · %@", elapsed, texts)
@@ -755,7 +782,7 @@ final class OverlayCoordinator {
                 settlingSince = nil
             } else if !LayoutStabilizer.same(placements, shownNow, tolerance: LayoutStabilizer.rescanTolerance) {
                 // Layout changed since it was drawn: hide and wait for it to settle.
-                hide()
+                hide("rescan found a new layout")
                 beginSettling()
                 return
             }

@@ -14,7 +14,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Permissions") {
-                permission("Accessibility", detail: "Switch desktops from the menu",
+                permission("Device Control", detail: "Switch desktops from the menu",
                            granted: Permissions.accessibilityGranted, open: Permissions.openAccessibilitySettings)
                 permission("Screen Recording", detail: "Show your names in Mission Control",
                            granted: Permissions.screenRecordingGranted, open: Permissions.openScreenRecordingSettings)
@@ -73,6 +73,9 @@ struct SettingsView: View {
         Accessibility: \(Permissions.accessibilityGranted) · Screen Recording: \(Permissions.screenRecordingGranted)
         Vision ready: \(overlay.visionReady) · Misses in a row: \(overlay.consecutiveMisses)
         Last scan: \(overlay.lastScanSummary)
+        Names: \(overlay.drawnSummary) · redrawn after loss: \(overlay.redraws)
+        Last hide: \(overlay.lastHide)
+        Running since: \(overlay.launchedAt.formatted(date: .abbreviated, time: .shortened)) · last wake: \(overlay.lastWake?.formatted(date: .abbreviated, time: .shortened) ?? "none")
         Spaces:
         \(spaces)
         """
