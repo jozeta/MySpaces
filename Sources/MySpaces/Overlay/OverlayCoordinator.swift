@@ -157,7 +157,9 @@ final class OverlayCoordinator {
     private var gateSession = 0
     private var settlingSince: Date?
     private var lastScanStart = Date.distantPast
-    private var scanInFlight = false
+    private var scanSlot = ScanSlot()
+    /// Scans take ~0.1–0.3 s; one holding the slot this long had its capture never return.
+    static let scanTimeout: TimeInterval = 5
     /// Next scan reads the whole band (a known row turned up empty).
     private var forceFullScan = false
     /// Row found by a full scan, probed next to confirm it is settled.
@@ -206,6 +208,8 @@ final class OverlayCoordinator {
     private func missionControlChanged(_ open: Bool) {
         gateSession += 1
         pendingLayout = nil
+        // A scan from the previous session ends unheard (the gate drops its result).
+        scanSlot.reset()
         if open {
             bandStream.start()
             gate.open()
@@ -267,13 +271,17 @@ final class OverlayCoordinator {
         let beforeOrder = model.controller.primaryDisplaySpaces.map(\.key)
         model.controller.refresh()
         if signature() != before { spacesChanged(previousOrder: beforeOrder) }
-        if settlingSince == nil, !scanInFlight, Date().timeIntervalSince(lastScanStart) > Self.rescanInterval {
+        if scanSlot.isStuck(timeout: Self.scanTimeout) {
+            log.notice("scan never finished; freeing the slot")
+            scanSlot.reset()
+        }
+        if settlingSince == nil, !scanSlot.isBusy, Date().timeIntervalSince(lastScanStart) > Self.rescanInterval {
             scan()
         }
         restoreLostNames()
         // While settling, each scan schedules the next. One that ends early (read against an older
         // list of desktops, or names already shown another way) leaves none coming: start one.
-        if let since = settlingSince, !scanInFlight, Date().timeIntervalSince(max(since, lastScanStart)) > Self.settleStall {
+        if let since = settlingSince, !scanSlot.isBusy, Date().timeIntervalSince(max(since, lastScanStart)) > Self.settleStall {
             scan()
         }
     }
@@ -300,7 +308,7 @@ final class OverlayCoordinator {
         arrivingKey = nil
         candidateRow = nil
         // A scan in flight read its captions against the old list: let it finish unheard.
-        scanInFlight = false
+        scanSlot.reset()
         stabilizer.reset()
         // A name stays only while its desktop is still at the same place in the row: after a
         // desktop is moved, a caption can look exactly as before ("Desktop 5" is still "Desktop 5")
@@ -655,7 +663,7 @@ final class OverlayCoordinator {
     }
 
     private func scan() {
-        guard !scanInFlight else { return }
+        guard !scanSlot.isBusy else { return }
         guard Permissions.screenRecordingGranted else {
             model.overlayStatus = "Names in Mission Control need Screen Recording."
             return
@@ -680,7 +688,7 @@ final class OverlayCoordinator {
         }
         candidateRow = nil
         forceFullScan = false
-        scanInFlight = true
+        let scanID = scanSlot.begin()
         lastScanStart = Date()
         let displaySpaces = model.controller.primaryDisplaySpaces
         let names = model.controller.names
@@ -710,11 +718,11 @@ final class OverlayCoordinator {
                 await MainActor.run {
                     self.finish(ticket, labels: labels, styled: styled, settling: settling && !timedOut && !capped,
                                  fullScan: rows == nil, elapsed: Date().timeIntervalSince(started),
-                                 fingerprint: fingerprint, signature: sig, started: started)
+                                 fingerprint: fingerprint, signature: sig, started: started, scan: scanID)
                 }
             } catch {
                 await MainActor.run {
-                    self.scanInFlight = false
+                    self.scanSlot.end(scanID)
                     self.settlingSince = nil
                     self.lastScanSummary = "Capture failed: \(error.localizedDescription)"
                 }
@@ -724,10 +732,13 @@ final class OverlayCoordinator {
 
     private func finish(_ ticket: ScanTicket, labels: [RecognizedLabel], styled: [(LabelPlacement, PatchStyle)]?,
                         settling: Bool, fullScan: Bool, elapsed: TimeInterval,
-                        fingerprint: CaptionFingerprint?, signature sig: String, started: Date) {
+                        fingerprint: CaptionFingerprint?, signature sig: String, started: Date, scan id: Int) {
+        // Done, whatever comes of the result. (Freeing the slot only for results still used left it
+        // taken for good when a desktop was clicked in Mission Control mid-scan: Mission Control
+        // closed and the current desktop changed at once, so the result was stale.)
+        scanSlot.end(id)
         // Read against an older list of desktops (one was added or removed meanwhile): stale.
         guard sig == signature() else { return }
-        scanInFlight = false
         // The fingerprint watch drew a newer layout while this scan was running: it is stale.
         if shownReference != nil, started < shownAt { return }
         // A remembered layout is fading in ahead of its captions; the fingerprint confirms it.
