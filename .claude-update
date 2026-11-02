@@ -1,0 +1,1 @@
+start=scripts/build-app.sh debug && build/MySpaces.app/Contents/MacOS/MySpaces
