@@ -47,3 +47,9 @@ or hide names; switching sends the user's Mission Control keyboard shortcuts.
   the format changes).
 - Label recognition currently assumes English "Desktop N" labels; don't break that path when
   adding localisation.
+
+## App standards
+
+This repo follows the app standards in `~/Desktop/code/tools/standards/STANDARDS.md` (rule IDs,
+severities; decisions and waivers in `.claude-standards`). `claude-check --repo .` checks it.
+Lint with `swiftlint lint` (`brew install swiftlint`): errors must be fixed, warnings are listed.

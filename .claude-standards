@@ -1,0 +1,1 @@
+waive=QA-CI-1: no CI until GitHub runners ship Xcode 27 (macOS 27 SDK); run swiftlint and swift test locally

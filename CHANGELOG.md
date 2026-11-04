@@ -6,6 +6,9 @@ Releases follow the project's git tags. Entries were reconstructed from the comm
 
 ## [Unreleased]
 
+- SwiftLint (`.swiftlint.yml`; naming and size rules off for the existing code). CI is waived in
+  `.claude-standards` until GitHub runners have Xcode 27
+
 - Ignore macOS, Claude Code and secret files
 - Add CLAUDE.md with project guidance for Claude Code
 - Add security policy
