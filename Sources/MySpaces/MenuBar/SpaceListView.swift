@@ -168,8 +168,8 @@ private struct PermissionCard: View {
     let detail: String
     let actionTitle: String
     let action: () -> Void
-    var secondaryTitle: String? = nil
-    var secondaryAction: (() -> Void)? = nil
+    var secondaryTitle: String?
+    var secondaryAction: (() -> Void)?
     let onDismiss: () -> Void
 
     var body: some View {
