@@ -6,6 +6,9 @@ Releases follow the project's git tags. Entries were reconstructed from the comm
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-11-12
+
+- README: shows the current version, a "What's new" section and the screenshots in a captioned grid
 - SwiftLint (`.swiftlint.yml`; naming and size rules off for the existing code). CI is waived in
   `.claude-standards` until GitHub runners have Xcode 27
 

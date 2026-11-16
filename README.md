@@ -9,6 +9,15 @@ into the Dock.
 
 ![Mission Control's thumbnail row with custom desktop names](docs/screenshots/mission-control-thumbnails.png)
 
+**Version: 1.0.3** · [Changelog](CHANGELOG.md)
+
+## What's new in 1.0.3
+
+- README: shows the current version, a "What's new" section and the screenshots in a captioned grid.
+- SwiftLint (`.swiftlint.yml`; naming and size rules off for the existing code). CI is waived until GitHub runners have Xcode 27.
+
+Older versions: see [CHANGELOG.md](CHANGELOG.md). The version is shown in the app's About panel.
+
 ## Features
 
 - **Name your desktops** from the menu bar. Names follow their desktops when you reorder them, and
@@ -22,15 +31,22 @@ into the Dock.
 - **Long names fade out** at the end instead of being cut off with "…".
 - **Launch at login**, and nothing else to set up.
 
-| Mission Control, before | Mission Control, with MySpaces |
-| --- | --- |
-| ![Before: Desktop 1 to Desktop 6](docs/screenshots/mission-control-before.png) | ![After: your names](docs/screenshots/mission-control-thumbnails.png) |
+## Screenshots
 
-![The collapsed Spaces bar with custom names](docs/screenshots/mission-control-bar.png)
-
-| The menu | Switching | Settings |
-| --- | --- | --- |
-| ![The MySpaces menu](docs/screenshots/menu.png) | ![The name shown when switching desktops](docs/screenshots/switch-name.png) | ![Settings](docs/screenshots/settings.png) |
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/mission-control-before.png" width="380" alt="Before: Desktop 1 to Desktop 6"><br>Mission Control, before</td>
+<td align="center"><img src="docs/screenshots/mission-control-thumbnails.png" width="380" alt="After: your names"><br>Mission Control, with MySpaces</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/mission-control-bar.png" width="380" alt="The collapsed Spaces bar with custom names"><br>The collapsed Spaces bar with custom names</td>
+<td align="center"><img src="docs/screenshots/menu.png" width="380" alt="The MySpaces menu"><br>The menu</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/switch-name.png" width="380" alt="The name shown when switching desktops"><br>The name shown when switching</td>
+<td align="center"><img src="docs/screenshots/settings.png" width="380" alt="Settings"><br>Settings</td>
+</tr>
+</table>
 
 ## Requirements
 
